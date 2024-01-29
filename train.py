@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from models.s4 import BatchStackedModel, S4Layer, sample_image_prefix
+from utils.datasets import Datasets
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
