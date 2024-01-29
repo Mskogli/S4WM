@@ -30,6 +30,7 @@ def create_mnist_dataset(bsz=128):
         batch_size=bsz,
         shuffle=True,
     )
+    
     testloader = torch.utils.data.DataLoader(
         test,
         batch_size=bsz,
@@ -38,7 +39,10 @@ def create_mnist_dataset(bsz=128):
 
     return trainloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
 
+def create_quad_depth_trajectories_datasets():
+    pass
 
 Datasets = {
-    "mnist": create_mnist_dataset,
+    "quad_depth_trajectories": create_mnist_dataset,
+    "quad_depth_trajectories": create_quad_depth_trajectories_datasets,
 }
