@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from flax import linen as nn
 from jax.nn.initializers import normal
-from s4_ssm import hippo_initializer, log_step_initializer, kernel_DPLR, discrete_DPLR, causal_convolution, scan_SSM
+from .s4_ssm import hippo_initializer, log_step_initializer, kernel_DPLR, discrete_DPLR, causal_convolution, scan_SSM
 
 """
 The neural network representation of the S4 model
