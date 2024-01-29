@@ -11,7 +11,7 @@ from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from models.s4 import BatchStackedModel, S4Layer, sample_image_prefix
+from models.s4 import BatchStackedModel, S4Layer
 from utils.datasets import Datasets
 
 try:
@@ -280,30 +280,6 @@ def example_train(
                 keep=train.epochs,
             )
 
-        if train.sample is not None:
-            if dataset == "mnist":  # Should work for QuickDraw too but untested
-                sample_fn = partial(
-                    sample_image_prefix, imshape=(28, 28)
-                )  # params=state["params"], length=784, bsz=64, prefix=train.sample)
-            else:
-                raise NotImplementedError(
-                    "Sampling currently only supported for MNIST"
-                )
-            samples, examples = sample_fn(
-                params=state.params,
-                model=model_cls(decode=True, training=False),
-                rng=rng,
-                dataloader=testloader,
-                prefix=train.sample,
-                n_batches=1,
-                save=False,
-            )
-            if wandb is not None:
-                samples = [wandb.Image(sample) for sample in samples]
-                wandb.log({"samples": samples}, commit=False)
-                examples = [wandb.Image(example) for example in examples]
-                wandb.log({"examples": examples}, commit=False)
-
         if (classification and test_acc > best_acc) or (
             not classification and test_loss < best_loss
         ):
@@ -334,7 +310,7 @@ def example_train(
             wandb.run.summary["Best Epoch"] = best_epoch
 
 
-@hydra.main(version_base=None, config_path="", config_name="config")
+@hydra.main(version_base=None, config_path="models/s4", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
