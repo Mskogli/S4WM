@@ -2,6 +2,8 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
+from .ag_traj_dataset import AerialGymTrajDataset
+
 def create_mnist_dataset(bsz=128):
     print("[*] Generating MNIST Sequence Modeling Dataset...")
 
@@ -39,8 +41,21 @@ def create_mnist_dataset(bsz=128):
 
     return trainloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
 
-def create_quad_depth_trajectories_datasets():
-    pass
+def create_quad_depth_trajectories_datasets(bsz=128):
+    print("[*] Generating Aerial Gym Trajectory Dataset")
+
+
+    dataset = AerialGymTrajDataset(
+        "/home/mathias/dev/trajectories.jsonl",
+        "cuda:0",
+        actions=True,
+    )
+
+    train_dataset, val_dataset = torch.utils.split_dataset(dataset, 0.1)
+    trainloader = torch.utils.DataLoader(train_dataset, batch_size=bsz, shuffle=True)
+    valloader = torch.utils.DataLoader(val_dataset, batch_size=bsz, shuffle=True)
+
+    return trainloader, valloader
 
 Datasets = {
     "quad_depth_trajectories": create_mnist_dataset,
