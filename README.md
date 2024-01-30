@@ -1,5 +1,3 @@
-# structured-state-space-wm
+# Structured State Space Sequence Models (S4)
 
-Learning representations of the world using Structured State Space Models (S4). The code in this repository is based of the blog post https://srush.github.io/annotated-s4/.
-
-
+This repository contains implementations of structured state space sequence models in Jax/Flax. The repository started as an adaptation of https://github.com/srush/annotated-s4.
