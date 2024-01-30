@@ -4,8 +4,8 @@ import jax
 import flax
 import jax.numpy as jnp
 
-from omegaconf import DictConfig, OmegaConf
-from flax.training import checkpoints, train_state
+from omegaconf import DictConfig
+from flax.training import checkpoints
 from utils.ag_traj_dataset import AerialGymTrajDataset
 from models.s4 import BatchStackedModel, S4Layer
 
