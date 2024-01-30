@@ -77,6 +77,9 @@ class StackedModel(nn.Module):
     prenorm: bool = True
     dropout: float = 0.0
     training: bool = True
+    classification: bool = False
+    embedding: bool = False
+    decode: bool = False
 
     def setup(self):
         self.encoder = nn.Dense(self.d_model)
@@ -99,6 +102,7 @@ class StackedModel(nn.Module):
         for layer in self.layers:
             x = layer(x)
         x = self.decoder(x)
+        print(x.shape)
         return x
 
 

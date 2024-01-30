@@ -1,4 +1,4 @@
-dataset: mnist-classification
+dataset: mnist
 layer: s4
 seed: 0
 

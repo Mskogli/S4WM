@@ -64,10 +64,12 @@ def create_train_state(
 ):
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
+
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
-        np.array(next(iter(trainloader))[0].numpy()),
+        np.array(next(iter(trainloader))[:, :-1, :].numpy()),
     )
+
     # Note: Added immediate `unfreeze()` to play well w/ Optax. See below!
     params = params["params"]
 
@@ -119,9 +121,14 @@ def train_epoch(state, rng, model, trainloader, classification=False):
     # Store Metrics
     model = model(training=True)
     batch_losses, batch_accuracies = [], []
-    for batch_idx, (inputs, labels) in enumerate(tqdm(trainloader)):
-        inputs = np.array(inputs.numpy())
-        labels = np.array(labels.numpy())  # Not the most efficient...
+
+    for batch_idx, batch in enumerate(tqdm(trainloader)):
+        inputs = np.array(batch[:, :-1, :].numpy())
+        labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
+
+        print("labels", labels.shape)
+        print("inputs", inputs.shape)
+        
         rng, drop_rng = jax.random.split(rng)
         state, loss, acc = train_step(
             state,
