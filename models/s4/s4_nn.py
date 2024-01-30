@@ -102,7 +102,6 @@ class StackedModel(nn.Module):
         for layer in self.layers:
             x = layer(x)
         x = self.decoder(x)
-        print(x.shape)
         return x
 
 

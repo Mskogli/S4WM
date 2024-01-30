@@ -1,9 +1,9 @@
-dataset: mnist
+dataset: quad_depth_trajectories
 layer: s4
 seed: 0
 
 model:
-  d_model: 128
+  d_model: 132
   n_layers: 4
   dropout: 0.0
   prenorm: true
@@ -12,12 +12,12 @@ model:
     N: 64
 
 train:
-  epochs: 10
+  epochs: 30
   bsz: 128
   lr: 0.001
   lr_schedule: false
   weight_decay: 0.01
-  checkpoint: false
+  checkpoint: true
   suffix: null # String to use for checkpoint suffix
   sample: null # Sample during validation with desired prefix length
 

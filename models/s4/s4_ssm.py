@@ -29,7 +29,6 @@ def causal_convolution(u, K, nofft=False):
     if nofft:
         return convolve(u, K, mode="full")[: u.shape[0]]
     else:
-        print(K.shape[0], u.shape[0])
         assert K.shape[0] == u.shape[0]
         ud = jnp.fft.rfft(jnp.pad(u, (0, K.shape[0])))
         Kd = jnp.fft.rfft(jnp.pad(K, (0, u.shape[0])))
