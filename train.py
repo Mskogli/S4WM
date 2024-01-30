@@ -266,20 +266,16 @@ def example_train(
         # Save a checkpoint each epoch & handle best (test loss... not "copacetic" but ehh)
         if train.checkpoint:
             suf = f"-{train.suffix}" if train.suffix is not None else ""
-            run_id = f"checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
             ckpt_path = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
+            print("ckpt_path", ckpt_path)
 
-        if test_loss < best_loss:
-            if train.checkpoint:
-                shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
-                if os.path.exists(f"{run_id}/best_{best_epoch}"):
-                    os.remove(f"{run_id}/best_{best_epoch}")
-
+        if test_loss < best_loss:                                   
             best_loss, best_epoch = test_loss, epoch
 
         print(

@@ -58,16 +58,6 @@ class SequenceBlock(nn.Module):
         return x
 
 
-class Embedding(nn.Embed):
-    num_embeddings: int
-    features: int
-
-    @nn.compact
-    def __call__(self, x):
-        y = nn.Embed(self.num_embeddings, self.features)(x[..., 0])
-        return jnp.where(x > 0, y, 0.0)
-
-
 class StackedModel(nn.Module):
     layer_cls: nn.Module
     layer: dict  # Extra arguments to pass into layer constructor
@@ -101,6 +91,7 @@ class StackedModel(nn.Module):
         x = self.encoder(x)
         for layer in self.layers:
             x = layer(x)
+        x = nn.gelu(x)
         x = self.decoder(x)
         return x
 
