@@ -76,16 +76,10 @@ class StackedModel(nn.Module):
     n_layers: int
     prenorm: bool = True
     dropout: float = 0.0
-    embedding: bool = False  # Use nn.Embed instead of nn.Dense encoder
-    classification: bool = False
     training: bool = True
-    decode: bool = False  # Probably should be moved into layer_args
 
     def setup(self):
-        if self.embedding:
-            self.encoder = Embedding(self.d_output, self.d_model)
-        else:
-            self.encoder = nn.Dense(self.d_model)
+        self.encoder = nn.Dense(self.d_model)
         self.decoder = nn.Dense(self.d_output)
         self.layers = [
             SequenceBlock(
@@ -101,26 +95,12 @@ class StackedModel(nn.Module):
         ]
 
     def __call__(self, x):
-        if not self.classification:
-            if not self.embedding:
-                x = x / 255.0  # Normalize
-            if not self.decode:
-                x = jnp.pad(x[:-1], [(1, 0), (0, 0)])
         x = self.encoder(x)
         for layer in self.layers:
             x = layer(x)
-        if self.classification:
-            x = jnp.mean(x, axis=0)
         x = self.decoder(x)
-        return nn.log_softmax(x, axis=-1)
+        return x
 
-BatchStackedModel = nn.vmap(
-    StackedModel,
-    in_axes=0,
-    out_axes=0,
-    variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
-    split_rngs={"params": False, "dropout": True},
-)
 
 class S4Layer(nn.Module):
     N: int
@@ -205,6 +185,14 @@ class S4Layer(nn.Module):
 
 
 S4Layer = cloneLayer(S4Layer)
+
+BatchStackedModel = nn.vmap(
+    StackedModel,
+    in_axes=0,
+    out_axes=0,
+    variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
+    split_rngs={"params": False, "dropout": True},
+)
 
 if __name__ == "__main__":
     # For this tutorial, construct a global JAX rng key
