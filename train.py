@@ -27,15 +27,10 @@ except (ImportError, AssertionError):
 # We define a couple of utility functions below to compute a standard cross-entropy loss, and compute
 # "token"-level prediction accuracy.
 
-@partial(np.vectorize, signature="(c),()->()")
+#@partial(np.vectorize, signature="(c),()->()")
 def cross_entropy_loss(logits, label):
-    one_hot_label = jax.nn.one_hot(label, num_classes=logits.shape[0])
-    return -np.sum(one_hot_label * logits)
-
-@partial(np.vectorize, signature="(c),()->()")
-def compute_accuracy(logits, label):
-    return np.argmax(logits) == label
-
+    loss = optax.l2_loss(logits, label)
+    return loss
 
 # As we're using Flax, we also write a utility function to return a default TrainState object.
 # This function initializes model parameters, as well as our optimizer. Note that for S4 models,
@@ -64,10 +59,12 @@ def create_train_state(
 ):
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
+
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
-        np.array(next(iter(trainloader))[0].numpy()),
+        np.array(next(iter(trainloader))[:, :-1, :].numpy()),
     )
+
     # Note: Added immediate `unfreeze()` to play well w/ Optax. See below!
     params = params["params"]
 
@@ -87,6 +84,7 @@ def create_train_state(
         k: optax.adam(learning_rate=schedule_fn(v * lr))
         for k, v in lr_layer.items()
     }
+
     optimizers["__default__"] = optax.adamw(
         learning_rate=schedule_fn(lr),
         weight_decay=weight_decay,
@@ -118,12 +116,14 @@ def create_train_state(
 def train_epoch(state, rng, model, trainloader, classification=False):
     # Store Metrics
     model = model(training=True)
-    batch_losses, batch_accuracies = [], []
-    for batch_idx, (inputs, labels) in enumerate(tqdm(trainloader)):
-        inputs = np.array(inputs.numpy())
-        labels = np.array(labels.numpy())  # Not the most efficient...
+    batch_losses = []
+
+    for batch_idx, batch in enumerate(tqdm(trainloader)):
+        inputs = np.array(batch[:, :-1, :].numpy())
+        labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
+
         rng, drop_rng = jax.random.split(rng)
-        state, loss, acc = train_step(
+        state, loss= train_step(
             state,
             drop_rng,
             inputs,
@@ -132,29 +132,29 @@ def train_epoch(state, rng, model, trainloader, classification=False):
             classification=classification,
         )
         batch_losses.append(loss)
-        batch_accuracies.append(acc)
+
 
     # Return average loss over batches
     return (
         state,
         np.mean(np.array(batch_losses)),
-        np.mean(np.array(batch_accuracies)),
     )
 
 
 def validate(params, model, testloader, classification=False):
     model = model(training=False)
-    losses, accuracies = [], []
-    for batch_idx, (inputs, labels) in enumerate(tqdm(testloader)):
-        inputs = np.array(inputs.numpy())
-        labels = np.array(labels.numpy())  # Not the most efficient...
-        loss, acc = eval_step(
+    losses = []
+    for batch_idx, batch in enumerate(tqdm(testloader)):
+        inputs = np.array(batch[:, :-1, :].numpy())
+        labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
+
+        loss = eval_step(
             inputs, labels, params, model, classification=classification
         )
         losses.append(loss)
-        accuracies.append(acc)
 
-    return np.mean(np.array(losses)), np.mean(np.array(accuracies))
+
+    return np.mean(np.array(losses))
 
 
 
@@ -169,27 +169,23 @@ def train_step(
             rngs={"dropout": rng},
             mutable=["intermediates"],
         )
-        loss = np.mean(cross_entropy_loss(logits, batch_labels))
-        acc = np.mean(compute_accuracy(logits, batch_labels))
-        return loss, (logits, acc)
 
-    if not classification:
-        batch_labels = batch_inputs[:, :, 0]
+        loss = cross_entropy_loss(logits, batch_labels)
+        loss = np.mean(loss)
+        
+        return loss, logits
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, (logits, acc)), grads = grad_fn(state.params)
+    (loss, logits), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
-    return state, loss, acc
+    return state, loss
 
 
 @partial(jax.jit, static_argnums=(3, 4))
 def eval_step(batch_inputs, batch_labels, params, model, classification=False):
-    if not classification:
-        batch_labels = batch_inputs[:, :, 0]
     logits = model.apply({"params": params}, batch_inputs)
     loss = np.mean(cross_entropy_loss(logits, batch_labels))
-    acc = np.mean(compute_accuracy(logits, batch_labels))
-    return loss, acc
+    return loss
 
 
 def example_train(
@@ -246,10 +242,10 @@ def example_train(
     )
 
     # Loop over epochs
-    best_loss, best_acc, best_epoch = 10000, 0, 0
+    best_loss, best_epoch = 10000, 0
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
-        state, train_loss, train_acc = train_epoch(
+        state, train_loss = train_epoch(
             state,
             train_rng,
             model_cls,
@@ -258,55 +254,43 @@ def example_train(
         )
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
-        test_loss, test_acc = validate(
+        test_loss = validate(
             state.params, model_cls, testloader, classification=classification
         )
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(
-            f"\tTrain Loss: {train_loss:.5f} -- Train Accuracy:"
-            f" {train_acc:.4f}\n\t Test Loss: {test_loss:.5f} --  Test"
-            f" Accuracy: {test_acc:.4f}"
+            f"\tTrain Loss: {train_loss:.5f} -- Train Loss:"
         )
 
         # Save a checkpoint each epoch & handle best (test loss... not "copacetic" but ehh)
         if train.checkpoint:
             suf = f"-{train.suffix}" if train.suffix is not None else ""
-            run_id = f"checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
             ckpt_path = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
+            print("ckpt_path", ckpt_path)
 
-        if (classification and test_acc > best_acc) or (
-            not classification and test_loss < best_loss
-        ):
-            if train.checkpoint:
-                shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
-                if os.path.exists(f"{run_id}/best_{best_epoch}"):
-                    os.remove(f"{run_id}/best_{best_epoch}")
-
-            best_loss, best_acc, best_epoch = test_loss, test_acc, epoch
+        if test_loss < best_loss:                                   
+            best_loss, best_epoch = test_loss, epoch
 
         print(
-            f"\tBest Test Loss: {best_loss:.5f} -- Best Test Accuracy:"
-            f" {best_acc:.4f} at Epoch {best_epoch + 1}\n"
+            f"\tBest Test Loss: {best_loss:.5f}"
         )
 
         if wandb is not None:
             wandb.log(
                 {
                     "train/loss": train_loss,
-                    "train/accuracy": train_acc,
                     "test/loss": test_loss,
-                    "test/accuracy": test_acc,
                 },
                 step=epoch,
             )
             wandb.run.summary["Best Test Loss"] = best_loss
-            wandb.run.summary["Best Test Accuracy"] = best_acc
             wandb.run.summary["Best Epoch"] = best_epoch
 
 

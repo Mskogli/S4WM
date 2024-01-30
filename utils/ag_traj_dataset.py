@@ -53,9 +53,10 @@ class AerialGymTrajDataset(Dataset):
     def __getitem__(self, idx) -> torch.tensor:
         json_object = ujson.loads(self.lines[idx])
 
+
         latents = [torch.tensor(json_object["latents"], device=self.device)]
 
-        action = (
+        actions = (
             [torch.tensor(json_object["action"], device=self.device)]
             if self.actions
             else []
@@ -69,7 +70,7 @@ class AerialGymTrajDataset(Dataset):
             for state in self.states
         ]
 
-        item = torch.cat(latents + states + action, 1)
+        item = torch.cat(latents + states + actions, 1)
 
         return item
 
