@@ -24,3 +24,11 @@ wandb:
   mode: disabled
   project: s4
   entity: null
+
+test:
+  prediction_length: 3 # use prediction length > 1 to "dream"
+  context_length: 40
+  decode: True
+  vizualise: True
+  rng_seed: 0
+  ckpt_dir: checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.001-bsz=256/checkpoint_99

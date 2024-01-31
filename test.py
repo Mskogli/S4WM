@@ -1,98 +1,16 @@
+import os
 import torch
 import hydra
 import jax
 import jax.numpy as jnp
 import numpy as np
+import matplotlib.pyplot as plt
 
 from omegaconf import DictConfig
 from flax.training import checkpoints
 from utils.ag_traj_dataset import AerialGymTrajDataset
 from models.s4 import BatchStackedModel, S4Layer
 from sevae.inference.scripts.VAENetworkInterface import VAENetworkInterface
-import matplotlib.pyplot as plt
-
-
-def test_inference(model_conf: DictConfig) -> None:
-    test_dataset = AerialGymTrajDataset(
-        "/home/mathias/dev/trajectories.jsonl",
-        "cpu",
-        actions=True,
-    )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=128, shuffle=True
-    )
-    test_batch = next(iter(test_loader))
-    test_batch = jnp.array(test_batch[:, :-1, :].numpy())
-
-    vae = VAENetworkInterface()
-    torch.random.manual_seed(0)
-    key = jax.random.PRNGKey(1)
-    init_rng, dropout_rng = jax.random.split(key, num=2)
-    model_conf.layer.l_max = 96
-
-    model = BatchStackedModel(
-        layer_cls=S4Layer,
-        d_output=128,
-        classification=False,
-        training=False,
-        **model_conf,
-    )
-    params = model.init(
-        {"params": init_rng, "dropout": dropout_rng},
-        jnp.array(next(iter(test_loader))[:, :-1, :].numpy()),
-    )
-
-    ckpt_dir = "/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.001-bsz=256/checkpoint_77"
-    ckpt_state = checkpoints.restore_checkpoint(ckpt_dir, target=None)
-    params = ckpt_state["params"]
-    preds = model.apply({"params": params}, test_batch)
-
-    # Decode latents to attain depth images from the predictions
-    pred_latent_tensor = torch.from_numpy(np.asarray(preds[0, 65, :])).to(
-        torch.device("cuda:0")
-    )
-    current_latent_tensor = torch.from_numpy(np.asarray(test_batch[0, 65, :128])).to(
-        torch.device("cuda:0")
-    )
-    gt_latent_tensor = torch.from_numpy(np.asarray(test_batch[0, 66, :128])).to(
-        torch.device("cuda:0")
-    )
-
-    pred_depth_img = vae.decode(pred_latent_tensor.view(1, -1))
-    current_depth_img = vae.decode(current_latent_tensor.view(1, -1))
-    gt_depth_img = vae.decode(gt_latent_tensor.view(1, -1))
-
-    # Plot results
-    fig = plt.figure(figsize=(12, 4), dpi=100, facecolor="w", edgecolor="k")
-
-    ax1 = fig.add_subplot(1, 3, 2)
-    ax1.set_title("$l_{t+1}$")
-    plt.imshow(gt_depth_img.reshape(270, 480))
-    plt.axis("off")
-
-    ax2 = fig.add_subplot(1, 3, 3)
-    ax2.set_title("$\hat l_{t+1}$")
-    plt.imshow(pred_depth_img.reshape(270, 480))
-    plt.axis("off")
-
-    ax3 = fig.add_subplot(1, 3, 1)
-    ax3.set_title("$l_t$")
-    plt.imshow(current_depth_img.reshape(270, 480))
-    plt.axis("off")
-
-    plt.savefig("s4_inference_test.png")
-
-
-def init_recurrence(model, params, init_x, rng):
-    variables = model.init(rng, init_x)
-    vars = {
-        "params": params,
-        "cache": variables["cache"].unfreeze(),
-        "prime": variables["prime"].unfreeze(),
-    }
-    print("[*] Priming")
-    _, prime_vars = model.apply(vars, init_x, mutable=["prime"])
-    return vars["params"], prime_vars["prime"], vars["cache"]
 
 
 def init_S4_RNN_mode(model, params, x0, rng) -> None:
@@ -108,44 +26,20 @@ def init_S4_RNN_mode(model, params, x0, rng) -> None:
     return vars["params"], prime_vars["prime"], vars["cache"]
 
 
-def sample_S4_RNN() -> None:
-    pass
+def s4_RNN_inference(model_conf: DictConfig, test_conf: DictConfig) -> None:
+    CONTEXT_LENGTH = test_conf.context_length
+    PREDICTION_LENGTH = test_conf.prediction_length
 
-
-def sample(model, params, prime, cache, x, start, end, rng):
-    def loop(i, cur):
-        x, rng, cache = cur
-        r, rng = jax.random.split(rng)
-        out, vars = model.apply(
-            {"params": params, "prime": prime, "cache": cache},
-            x[:, np.arange(1, 2) * i],
-            mutable=["cache"],
-        )
-
-        def update(x, out):
-            p = jax.random.categorical(r, out[0])
-            x = x.at[i + 1, 0].set(p)
-            return x
-
-        x = jax.vmap(update)(x, out)
-        return x, rng, vars["cache"].unfreeze()
-
-    return jax.lax.fori_loop(start, end, jax.jit(loop), (x, rng, cache))[0]
-
-
-def test_dreaming(model_conf: DictConfig) -> None:
     test_dataset = AerialGymTrajDataset(
         "/home/mathias/dev/trajectories.jsonl",
         "cpu",
         actions=True,
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=128, shuffle=False
-    )
-    test_batch = next(iter(test_loader))
-    test_batch = jnp.array(test_batch[:, :-1, :].numpy())
-    torch.random.manual_seed(0)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
+    test_data = next(iter(test_loader))
+    test_data = jnp.array(test_data[:, :-1, :].numpy())
 
+    torch.random.manual_seed(0)
     init_rng = jax.random.PRNGKey(1)
 
     model = BatchStackedModel(
@@ -157,58 +51,67 @@ def test_dreaming(model_conf: DictConfig) -> None:
         **model_conf,
     )
 
-    ckpt_dir = "/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.001-bsz=256/checkpoint_77"
-    ckpt_state = checkpoints.restore_checkpoint(ckpt_dir, target=None)
+    ckpt_state = checkpoints.restore_checkpoint(
+        f"{os.path.dirname(os.path.realpath(__file__))}/{test_conf.ckpt_dir}",
+        target=None,
+    )
     params = ckpt_state["params"]
 
-    x0 = jnp.zeros_like(test_batch)
+    x0 = jnp.zeros_like(test_data)
     params, prime, cache = init_S4_RNN_mode(model, params, x0, init_rng)
 
-    # Build the model context
-    L_CONTEXT = 80
-    L_DREAM = 5
-    preds, vars = model.apply(
+    # Feed the model context
+    pred, vars = model.apply(
         {"params": params, "prime": prime, "cache": cache},
-        test_batch[:, 0:L_CONTEXT, :],
+        test_data[:, 0:CONTEXT_LENGTH, :],
         mutable=["cache"],
     )
     cache = vars["cache"]
 
-    dream_actions = np.zeros((128, 1, 4))
-    dream_actions[:, :, :] = [0, 0, 0, 7.7]
-    dream = [preds[:, -1, :]]
+    dream_actions = np.zeros((1, 1, 4))
+    dream_actions[:, :, :] = [0, 0, 0, 0]
+    preds = [pred[:, -1, :]]
 
     vae = VAENetworkInterface()
-    fig = plt.figure(figsize=(12, 4), dpi=100, facecolor="w", edgecolor="k")
+    fig, axs = plt.subplots(nrows=2, ncols=PREDICTION_LENGTH)
+    axs = axs.flatten()
 
-    for i in range(L_DREAM):
-        preds, vars = model.apply(
+    for i in range(PREDICTION_LENGTH):
+        pred, vars = model.apply(
             {"params": params, "prime": prime, "cache": cache},
-            jnp.concatenate((dream[-1].reshape(128, 1, 128), dream_actions), axis=2),
+            jnp.concatenate((preds[-1].reshape(1, 1, 128), dream_actions), axis=2),
             mutable=["cache"],
         )
         cache = vars["cache"]
-        dream.append(preds)
+        preds.append(pred)
 
         # Convert to torch and decode
-        pred_latent_tensor = torch.from_numpy(np.asarray(preds[13, :, :])).to(
+        pred_latent_tensor = torch.from_numpy(np.asarray(pred[:, :, :])).to(
             torch.device("cuda:0")
         )
+        gt_latent_tensor = torch.from_numpy(np.asarray(test_data[0, 0, :])).to(
+            torch.device("cuda:0")
+        )
+
+        gt_depth_img = vae.decode(gt_latent_tensor)
         pred_depth_img = vae.decode(pred_latent_tensor)
 
         # Vizualise
-        ax = fig.add_subplot(1, L_DREAM, i + 1)
-        ax.set_title(f"$l_{i+1}$")
-        plt.imshow(pred_depth_img.reshape(270, 480))
-        plt.axis("off")
+        axs[i].set_title(f"$l_{i+1}$")
+        axs[i].imshow(pred_depth_img.reshape(270, 480))
+        axs[i].set_axis_off()
 
-    plt.savefig("s4_dreaming_test.png")
+        axs[i + PREDICTION_LENGTH].set_title(f"$l_{i+1}$")
+        axs[i + PREDICTION_LENGTH].imshow(gt_depth_img.reshape(270, 480))
+        axs[i + PREDICTION_LENGTH].set_axis_off()
+
+    plt.savefig("s4_predictions.png")
 
 
-@hydra.main(version_base=None, config_path="models/s4", config_name="config")
+@hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     # test_inference(cfg.model)
-    test_dreaming(cfg.model)
+    s4_RNN_inference(cfg.model, cfg.test)
 
 
 if __name__ == "__main__":
