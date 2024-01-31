@@ -131,34 +131,3 @@ def init(x):
 def hippo_initializer(N):
     Lambda, P, B, _ = make_DPLR_HiPPO(N)
     return init(Lambda.real), init(Lambda.imag), init(P), init(B)
-
-def sample(model, params, prime, cache, x, start, end, rng):
-    def loop(i, cur):
-        x, rng, cache = cur
-        r, rng = jax.random.split(rng)
-        out, vars = model.apply(
-            {"params": params, "prime": prime, "cache": cache},
-            x[:, jnp.arange(1, 2) * i],
-            mutable=["cache"],
-        )
-
-        def update(x, out):
-            p = jax.random.categorical(r, out[0])
-            x = x.at[i + 1, 0].set(p)
-            return x
-
-        x = jax.vmap(update)(x, out)
-        return x, rng, vars["cache"].unfreeze()
-
-    return jax.lax.fori_loop(start, end, jax.jit(loop), (x, rng, cache))[0]
-
-def init_recurrence(model, params, init_x, rng):
-    variables = model.init(rng, init_x)
-    vars = {
-        "params": params,
-        "cache": variables["cache"].unfreeze(),
-        "prime": variables["prime"].unfreeze(),
-    }
-    print("[*] Priming")
-    _, prime_vars = model.apply(vars, init_x, mutable=["prime"])
-    return vars["params"], prime_vars["prime"], vars["cache"]

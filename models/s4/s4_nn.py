@@ -19,7 +19,6 @@ def cloneLayer(layer):
         split_rngs={"params": True},
     )
 
-
 class SequenceBlock(nn.Module):
     layer_cls: nn.Module
     layer: dict  # Hyperparameters of inner layer
@@ -115,14 +114,13 @@ class S4Layer(nn.Module):
         init_A_re, init_A_im, init_P, init_B = hippo_initializer(self.N)
         self.Lambda_re = self.param("Lambda_re", init_A_re, (self.N,))
         self.Lambda_im = self.param("Lambda_im", init_A_im, (self.N,))
+        
         # Ensure the real part of Lambda is negative
         # (described in the SaShiMi follow-up to S4)
         self.Lambda = jnp.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im
         self.P = self.param("P", init_P, (self.N,))
         self.B = self.param("B", init_B, (self.N,))
-        # C should be init as standard normal
-        # This doesn't work due to how JAX handles complex optimizers https://github.com/deepmind/optax/issues/196
-        # self.C = self.param("C", normal(stddev=1.0, dtype=np.complex64), (self.N,))
+
         self.C = self.param("C", normal(stddev=0.5**0.5), (self.N, 2))
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
