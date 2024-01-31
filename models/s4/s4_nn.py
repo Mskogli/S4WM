@@ -3,12 +3,20 @@ import jax.numpy as jnp
 
 from flax import linen as nn
 from jax.nn.initializers import normal
-from .s4_ssm import hippo_initializer, log_step_initializer, kernel_DPLR, discrete_DPLR, causal_convolution, scan_SSM
+from .s4_ssm import (
+    hippo_initializer,
+    log_step_initializer,
+    kernel_DPLR,
+    discrete_DPLR,
+    causal_convolution,
+    scan_SSM,
+)
 
 """
 The neural network representation of the S4 model
 
 """
+
 
 def cloneLayer(layer):
     return nn.vmap(
@@ -18,6 +26,7 @@ def cloneLayer(layer):
         variable_axes={"params": 1, "cache": 1, "prime": 1},
         split_rngs={"params": True},
     )
+
 
 class SequenceBlock(nn.Module):
     layer_cls: nn.Module
@@ -114,7 +123,7 @@ class S4Layer(nn.Module):
         init_A_re, init_A_im, init_P, init_B = hippo_initializer(self.N)
         self.Lambda_re = self.param("Lambda_re", init_A_re, (self.N,))
         self.Lambda_im = self.param("Lambda_im", init_A_im, (self.N,))
-        
+
         # Ensure the real part of Lambda is negative
         # (described in the SaShiMi follow-up to S4)
         self.Lambda = jnp.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im

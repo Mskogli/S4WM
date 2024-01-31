@@ -23,18 +23,12 @@ except (ImportError, AssertionError):
     wandb = None
 
 
-# ### Utilities
-# We define a couple of utility functions below to compute a standard cross-entropy loss, and compute
-# "token"-level prediction accuracy.
-
-#@partial(np.vectorize, signature="(c),()->()")
+# @partial(np.vectorize, signature="(c),()->()")
 def cross_entropy_loss(logits, label):
     loss = optax.l2_loss(logits, label)
     return loss
 
-# As we're using Flax, we also write a utility function to return a default TrainState object.
-# This function initializes model parameters, as well as our optimizer. Note that for S4 models,
-# we use a custom learning rate for parameters of the S4 kernel (lr = 0.001, no weight decay).
+
 def map_nested_fn(fn):
     """Recursively apply `fn to the key-value pairs of a nested dict / pytree."""
 
@@ -81,8 +75,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.adam(learning_rate=schedule_fn(v * lr))
-        for k, v in lr_layer.items()
+        k: optax.adam(learning_rate=schedule_fn(v * lr)) for k, v in lr_layer.items()
     }
 
     optimizers["__default__"] = optax.adamw(
@@ -108,9 +101,7 @@ def create_train_state(
     print(f"[*] Trainable Parameters: {sum(jax.tree_leaves(param_sizes))}")
     print(f"[*] Total training steps: {total_steps}")
 
-    return train_state.TrainState.create(
-        apply_fn=model.apply, params=params, tx=tx
-    )
+    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
 def train_epoch(state, rng, model, trainloader, classification=False):
@@ -123,7 +114,7 @@ def train_epoch(state, rng, model, trainloader, classification=False):
         labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
 
         rng, drop_rng = jax.random.split(rng)
-        state, loss= train_step(
+        state, loss = train_step(
             state,
             drop_rng,
             inputs,
@@ -132,7 +123,6 @@ def train_epoch(state, rng, model, trainloader, classification=False):
             classification=classification,
         )
         batch_losses.append(loss)
-
 
     # Return average loss over batches
     return (
@@ -148,22 +138,16 @@ def validate(params, model, testloader, classification=False):
         inputs = np.array(batch[:, :-1, :].numpy())
         labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
 
-        loss = eval_step(
-            inputs, labels, params, model, classification=classification
-        )
+        loss = eval_step(inputs, labels, params, model, classification=classification)
         losses.append(loss)
-
 
     return np.mean(np.array(losses))
 
 
-
 @partial(jax.jit, static_argnums=(4, 5))
-def train_step(
-    state, rng, batch_inputs, batch_labels, model, classification=False
-):
+def train_step(state, rng, batch_inputs, batch_labels, model, classification=False):
     def loss_fn(params):
-        logits, mod_vars = model.apply(
+        logits, _ = model.apply(
             {"params": params},
             batch_inputs,
             rngs={"dropout": rng},
@@ -172,11 +156,11 @@ def train_step(
 
         loss = cross_entropy_loss(logits, batch_labels)
         loss = np.mean(loss)
-        
+
         return loss, logits
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, logits), grads = grad_fn(state.params)
+    (loss, _), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
     return state, loss
 
@@ -259,9 +243,7 @@ def example_train(
         )
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
-        print(
-            f"\tTrain Loss: {train_loss:.5f} -- Train Loss:"
-        )
+        print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
 
         # Save a checkpoint each epoch & handle best (test loss... not "copacetic" but ehh)
         if train.checkpoint:
@@ -275,12 +257,10 @@ def example_train(
             )
             print("ckpt_path", ckpt_path)
 
-        if test_loss < best_loss:                                   
+        if test_loss < best_loss:
             best_loss, best_epoch = test_loss, epoch
 
-        print(
-            f"\tBest Test Loss: {best_loss:.5f}"
-        )
+        print(f"\tBest Test Loss: {best_loss:.5f}")
 
         if wandb is not None:
             wandb.log(
@@ -302,9 +282,7 @@ def main(cfg: DictConfig) -> None:
     # Track with wandb
     if wandb is not None:
         wandb_cfg = cfg.pop("wandb")
-        wandb.init(
-            **wandb_cfg, config=OmegaConf.to_container(cfg, resolve=True)
-        )
+        wandb.init(**wandb_cfg, config=OmegaConf.to_container(cfg, resolve=True))
 
     example_train(**cfg)
 
