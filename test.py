@@ -69,17 +69,45 @@ def s4_RNN_inference(model_conf: DictConfig, test_conf: DictConfig) -> None:
     cache = vars["cache"]
 
     dream_actions = np.zeros((1, 1, 4))
-    dream_actions[:, :, :] = [0, 0, 0, 0]
+    dream_actions[:, :, :] = [0, 0, 0, 1.5]
     preds = [pred[:, -1, :]]
 
     vae = VAENetworkInterface()
-    fig, axs = plt.subplots(nrows=2, ncols=PREDICTION_LENGTH)
+    fig, axs = plt.subplots(nrows=2, ncols=PREDICTION_LENGTH + 1)
     axs = axs.flatten()
 
+    pred_latent_tensor = torch.from_numpy(np.asarray(pred[:, -1, :])).to(
+        torch.device("cuda:0")
+    )
+
+    gt_latent_tensor = (
+        torch.from_numpy(np.asarray(test_data[:, CONTEXT_LENGTH, :128]))
+        .to(torch.device("cuda:0"))
+        .view(1, 1, 128)
+    )
+
+    gt_depth_img = vae.decode(gt_latent_tensor)
+    pred_depth_img = vae.decode(pred_latent_tensor.view(1, 1, 128))
+
+    axs[0].set_title(f"$l_{1}$")
+    axs[0].imshow(pred_depth_img.reshape(270, 480))
+    axs[0].set_axis_off()
+
+    axs[PREDICTION_LENGTH + 1].set_title(f"$l_{1}$")
+    axs[PREDICTION_LENGTH + 1].imshow(gt_depth_img.reshape(270, 480))
+    axs[PREDICTION_LENGTH + 1].set_axis_off()
+
     for i in range(PREDICTION_LENGTH):
+        print(cache)
         pred, vars = model.apply(
             {"params": params, "prime": prime, "cache": cache},
-            jnp.concatenate((preds[-1].reshape(1, 1, 128), dream_actions), axis=2),
+            jnp.concatenate(
+                (
+                    preds[-1].reshape(1, 1, 128),
+                    dream_actions.reshape(1, 1, 4),
+                ),
+                axis=2,
+            ),
             mutable=["cache"],
         )
         cache = vars["cache"]
@@ -89,28 +117,31 @@ def s4_RNN_inference(model_conf: DictConfig, test_conf: DictConfig) -> None:
         pred_latent_tensor = torch.from_numpy(np.asarray(pred[:, :, :])).to(
             torch.device("cuda:0")
         )
-        gt_latent_tensor = torch.from_numpy(np.asarray(test_data[0, 0, :])).to(
-            torch.device("cuda:0")
+
+        gt_latent_tensor = (
+            torch.from_numpy(np.asarray(test_data[:, CONTEXT_LENGTH + i + 1, :128]))
+            .to(torch.device("cuda:0"))
+            .view(1, 1, 128)
         )
 
         gt_depth_img = vae.decode(gt_latent_tensor)
-        pred_depth_img = vae.decode(pred_latent_tensor)
+        pred_depth_img = vae.decode(pred_latent_tensor.view(1, 1, 128))
 
         # Vizualise
-        axs[i].set_title(f"$l_{i+1}$")
-        axs[i].imshow(pred_depth_img.reshape(270, 480))
-        axs[i].set_axis_off()
+        axs[i + 1].set_title(f"$l_{i+1}$")
+        axs[i + 1].imshow(pred_depth_img.reshape(270, 480))
+        axs[i + 1].set_axis_off()
 
-        axs[i + PREDICTION_LENGTH].set_title(f"$l_{i+1}$")
-        axs[i + PREDICTION_LENGTH].imshow(gt_depth_img.reshape(270, 480))
-        axs[i + PREDICTION_LENGTH].set_axis_off()
+        axs[i + 2 + PREDICTION_LENGTH].set_title(f"$l_{i+1}$")
+        axs[i + 2 + PREDICTION_LENGTH].imshow(gt_depth_img.reshape(270, 480))
+        axs[i + 2 + PREDICTION_LENGTH].set_axis_off()
 
+    fig.tight_layout()
     plt.savefig("s4_predictions.png")
 
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    # test_inference(cfg.model)
     s4_RNN_inference(cfg.model, cfg.test)
 
 
