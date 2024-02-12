@@ -2,10 +2,7 @@ import jax.numpy as jnp
 
 from jax import random
 from flax import linen as nn
-from tensorflow_probability.substrates import jax as tfp
 from jax.nn.initializers import glorot_uniform, zeros
-
-tfd = tfp.distributions
 
 
 class ImageEncoder(nn.Module):
