@@ -9,6 +9,7 @@ Utilities for computing the convolution kernel and the recurrent representation 
 
 """
 
+
 def log_step_initializer(dt_min=0.001, dt_max=0.1):
     def init(key, shape):
         return jax.random.uniform(key, shape) * (
@@ -17,6 +18,7 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
 
     return init
 
+
 def scan_SSM(Ab, Bb, Cb, u, x0):
     def step(x_k_1, u_k):
         x_k = Ab @ x_k_1 + Bb @ u_k
@@ -24,6 +26,7 @@ def scan_SSM(Ab, Bb, Cb, u, x0):
         return x_k, y_k
 
     return jax.lax.scan(step, x0, u)
+
 
 def causal_convolution(u, K, nofft=False):
     if nofft:
@@ -35,17 +38,20 @@ def causal_convolution(u, K, nofft=False):
         out = ud * Kd
         return jnp.fft.irfft(out)[: u.shape[0]]
 
+
 def make_HiPPO(N):
     P = jnp.sqrt(1 + 2 * jnp.arange(N))
     A = P[:, jnp.newaxis] * P[jnp.newaxis, :]
     A = jnp.tril(A) - jnp.diag(jnp.arange(N))
     return -A
 
+
 @jax.jit
 def cauchy(v, omega, lambd):
     """Cauchy matrix multiplication: (n), (l), (n) -> (l)"""
     cauchy_dot = lambda _omega: (v / (_omega - lambd)).sum()
     return jax.vmap(cauchy_dot)(omega)
+
 
 def kernel_DPLR(Lambda, P, Q, B, C, step, L):
     # Evaluate at roots of unity
@@ -66,6 +72,7 @@ def kernel_DPLR(Lambda, P, Q, B, C, step, L):
     atRoots = c * (k00 - k01 * (1.0 / (1.0 + k11)) * k10)
     out = jnp.fft.ifft(atRoots, L).reshape(L)
     return out.real
+
 
 def discrete_DPLR(Lambda, P, Q, B, C, step, L):
     # Convert parameters to matrices
@@ -93,6 +100,7 @@ def discrete_DPLR(Lambda, P, Q, B, C, step, L):
     Cb = Ct @ inv(I - matrix_power(Ab, L)).conj()
     return Ab, Bb, Cb.conj()
 
+
 def make_NPLR_HiPPO(N):
     # Make -HiPPO
     nhippo = make_HiPPO(N)
@@ -103,6 +111,7 @@ def make_NPLR_HiPPO(N):
     # HiPPO also specifies the B matrix
     B = jnp.sqrt(2 * jnp.arange(N) + 1.0)
     return nhippo, P, B
+
 
 def make_DPLR_HiPPO(N):
     """Diagonalize NPLR representation"""
@@ -122,43 +131,15 @@ def make_DPLR_HiPPO(N):
     B = V.conj().T @ B
     return Lambda_real + 1j * Lambda_imag, P, B, V
 
+
 def init(x):
     def _init(key, shape):
         assert shape == x.shape
         return x
+
     return _init
+
 
 def hippo_initializer(N):
     Lambda, P, B, _ = make_DPLR_HiPPO(N)
     return init(Lambda.real), init(Lambda.imag), init(P), init(B)
-
-def sample(model, params, prime, cache, x, start, end, rng):
-    def loop(i, cur):
-        x, rng, cache = cur
-        r, rng = jax.random.split(rng)
-        out, vars = model.apply(
-            {"params": params, "prime": prime, "cache": cache},
-            x[:, jnp.arange(1, 2) * i],
-            mutable=["cache"],
-        )
-
-        def update(x, out):
-            p = jax.random.categorical(r, out[0])
-            x = x.at[i + 1, 0].set(p)
-            return x
-
-        x = jax.vmap(update)(x, out)
-        return x, rng, vars["cache"].unfreeze()
-
-    return jax.lax.fori_loop(start, end, jax.jit(loop), (x, rng, cache))[0]
-
-def init_recurrence(model, params, init_x, rng):
-    variables = model.init(rng, init_x)
-    vars = {
-        "params": params,
-        "cache": variables["cache"].unfreeze(),
-        "prime": variables["prime"].unfreeze(),
-    }
-    print("[*] Priming")
-    _, prime_vars = model.apply(vars, init_x, mutable=["prime"])
-    return vars["params"], prime_vars["prime"], vars["cache"]

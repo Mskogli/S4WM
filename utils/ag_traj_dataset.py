@@ -53,7 +53,6 @@ class AerialGymTrajDataset(Dataset):
     def __getitem__(self, idx) -> torch.tensor:
         json_object = ujson.loads(self.lines[idx])
 
-
         latents = [torch.tensor(json_object["latents"], device=self.device)]
 
         actions = (
@@ -78,7 +77,6 @@ class AerialGymTrajDataset(Dataset):
 def split_dataset(
     dataset: AerialGymTrajDataset, val_split: float
 ) -> Tuple[AerialGymTrajDataset, ...]:  # 2 tuple
-
     total_samples = len(dataset.lines)
     train_len = int(total_samples * (1 - val_split))
     val_len = total_samples - train_len
