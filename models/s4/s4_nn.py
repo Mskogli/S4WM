@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from flax import linen as nn
 from jax.nn.initializers import normal
-from .s4_ssm import (
+from s4_ssm import (
     hippo_initializer,
     log_step_initializer,
     kernel_DPLR,
@@ -194,6 +194,18 @@ BatchStackedModel = nn.vmap(
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
     split_rngs={"params": False, "dropout": True},
 )
+
+S4Block = BatchStackedModel(
+    layer_cls=S4Layer,
+    layer={"N": 128, "l_max": 150},
+    d_output=128,
+    classification=False,
+    training=False,
+    decode=True,
+    d_model=256,
+    n_layers=2,
+)
+
 
 if __name__ == "__main__":
     # For this tutorial, construct a global JAX rng key

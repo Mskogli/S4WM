@@ -4,9 +4,10 @@ import jax.numpy as jnp
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
 from common import ImageEncoder, ImageDecoder
+from s4_nn import S4Block
 from utils import OneHotDist
 
-from typing import Dict
+from typing import Dict, Union, Tuple
 
 tfd = tfp.distributions
 f32 = jnp.float32
@@ -14,59 +15,104 @@ f32 = jnp.float32
 
 class S4WorldModel(nn.Module):
     latent_dim: int = 128
+    action_dim: int = 4
+    hidden_dim: int = 128
     discrete_latent_state: bool = True
+    batch_size: int = 1
 
     def setup(self) -> None:
         self.num_classes = self.latent_dim
+
         self.encoder = ImageEncoder(latent_dim=self.latent_dim, act="silu")
         self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
+        self.sequence_block = S4Block
 
-        self.embedding_to_discrete_stats_fc = nn.Dense(
-            features=self.latent_dim * self.num_classes
+        embedding_to_stats_head = nn.Dense(
+            features=(
+                self.latent_dim * self.num_classes
+                if self.discrete_latent_state
+                else 2 * self.latent_dim
+            )
         )
-        self.embedding_to_continious_stats_fc = nn.Dense(features=2 * self.latent_dim)
+        hidden_to_stats_head = nn.Dense(
+            features=(
+                self.latent_dim * self.num_classes
+                if self.discrete_latent_state
+                else 2 * self.latent_dim
+            )
+        )
 
-    def get_latent_state_from_image(self, image: jnp.ndarray) -> jnp.ndarray:
+        self.statistic_heads = {
+            "embedding": embedding_to_stats_head,
+            "hidden": hidden_to_stats_head,
+        }
+
+        self.input_head = nn.Dense(features=self.latent_dim + self.action_dim)
+
+    def get_latent_posterior_from_image(
+        self, image: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         embedding = self.encoder(image)
-        statistics = self._get_statistics_from_embedding(
-            embedding=embedding, discrete=self.discrete_latent_state, unimix=0.01
+        statistics = self._get_statistics(
+            x=embedding,
+            name="embedding",
+            discrete=self.discrete_latent_state,
+            unimix=0.01,
         )
-        latent_distribution = self._get_distribution_from_statistics(
+        z_posterior_dist = self._get_distribution_from_statistics(
             statistics=statistics, discrete=self.discrete_latent_state
         )
-        z = latent_distribution.sample(seed=jax.random.PRNGKey(1))
-        return z
+        z_posterior = z_posterior_dist.sample(seed=jax.random.PRNGKey(1))
+        return z_posterior, z_posterior_dist
 
-    def get_image_from_hidden_state(self, hidden: jnp.ndarray) -> jnp.ndarray:
-        return self.decoder(hidden)
+    def get_latent_prior_from_hidden(
+        self, hidden: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        statistics = self._get_statistics(
+            x=hidden,
+            name="hidden",
+            discrete=self.discrete_latent_state,
+            unimix=0.01,
+        )
+        z_prior_dist = self._get_distribution_from_statistics(
+            statistics=statistics, discrete=self.discrete_latent_state
+        )
+        z_prior = z_prior_dist.sample(seed=jax.random.PRNGKey(1))
+        return z_prior, z_prior_dist
 
-    def get_statistics_from_embedding(self):
-        pass
+    def get_image_prior_from_hidden(
+        self, hidden: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        x = self.decoder(hidden)
+        img_prior_dist = self._get_distribution_from_statistics(
+            statistics=x, image=True
+        )
+        img_prior = img_prior_dist.sample(seed=jax.random.PRNGKey(1))
 
-    def get_latent_distribution_from_statistics(self):
-        pass
-
-    def loss(self):
-        pass
-
-    def compute_hidden_state(self):
-        pass
+        return img_prior, img_prior_dist
 
     def _get_distribution_from_statistics(
-        self, statistics: Dict[str, jnp.ndarray], discrete: bool = True
+        self,
+        statistics: Union[Dict[str, jnp.ndarray], jnp.ndarray],
+        discrete: bool = True,
+        image: bool = False,
     ) -> tfd.Distribution:
-        if discrete:
+        if image:
+            mean = statistics.reshape(1, -1).astype(f32)
+            std = jnp.ones_like(mean).astype(f32)
+            return tfd.MultivariateNormalDiag(mean, std)
+        elif discrete:
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
         else:
             mean = statistics["mean"].astype(f32)
             std = statistics["std"].astype(f32)
             return tfd.MultivariateNormalDiag(mean, std)
 
-    def _get_statistics_from_embedding(
-        self, embedding: jnp.ndarray, discrete: bool = False, unimix: float = 0.0
+    def _get_statistics(
+        self, x: jnp.ndarray, name: str, discrete: bool = False, unimix: float = 0.0
     ) -> Dict[str, jnp.ndarray]:
         if discrete:
-            x = self.embedding_to_discrete_stats_fc(embedding)
+            x = self.statistic_heads[name](x)
             logits = x.reshape(x.shape[:1] + (self.latent_dim, self.num_classes))
 
             if unimix:
@@ -76,15 +122,25 @@ class S4WorldModel(nn.Module):
                 logits = jnp.log(probs)
             return {"logits": logits}
 
-        x = self.embedding_to_continious_stats_fc(embedding)
+        x = self.statistic_heads[name](x)
         mean, std = jnp.split(x, 2, -1)
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
         return {"mean": mean, "std": std}
 
-    def __call__(self, img):
-        z = self.get_latent_state_from_image(img)
-        print(z.shape)
-        print(z)
+    def __call__(self, img: jnp.ndarray, action: jnp.ndarray):
+        # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
+        z_posterior, z_posterior_dist = self.get_latent_posterior_from_image(img)
+
+        if self.discrete_latent_state:
+            shape = (self.batch_size, self.latent_dim * self.num_classes)
+            z_posterior = z_posterior.reshape(shape)
+
+        g = self.input_head(jnp.concatenate((z_posterior, action), axis=-1))
+        hidden = self.sequence_block(g.reshape(1, 1, -1))
+
+        # Compute prior \hat z_{t+1} ~ p(\hat z | h) and predict next depth image
+        z_prior, z_prior_dist = self.get_latent_prior_from_hidden(hidden)
+        x_prior = self.get_image_prior_from_hidden(hidden)
 
 
 if __name__ == "__main__":
@@ -92,5 +148,5 @@ if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
     input_img = jax.random.normal(key, (1, 270, 480))
 
-    model = S4WorldModel(discrete_latent_state=False)
-    params = model.init(jax.random.PRNGKey(1), input_img)["params"]
+    model = S4WorldModel(discrete_latent_state=False, latent_dim=128)
+    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((1, 4)))["params"]
