@@ -137,9 +137,6 @@ class S4WorldModel(nn.Module):
         Returns:
             jnp.float32: _description_
         """
-        BETA_REC = 0.8
-        BETA_KL = 0.2
-        ALPHA = 0.8  # KL Balancing parameter
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
@@ -208,7 +205,7 @@ class S4WorldModel(nn.Module):
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
         return {"mean": mean, "std": std}
 
-    def __call__(self, img: jnp.ndarray, action: jnp.ndarray):
+    def __call__(self, imgs: jnp.ndarray, actions: jnp.ndarray):
         """_summary_
 
         Args:
@@ -217,13 +214,13 @@ class S4WorldModel(nn.Module):
         """
 
         # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
-        z_posterior, z_posterior_dist = self.get_latent_posterior_from_image(img)
+        z_posterior, z_posterior_dist = self.get_latent_posterior_from_image(imgs)
 
         if self.discrete_latent_state:
             shape = (self.batch_size, self.latent_dim * self.num_classes)
             z_posterior = z_posterior.reshape(shape)
 
-        g = self.input_head(jnp.concatenate((z_posterior, action), axis=-1))
+        g = self.input_head(jnp.concatenate((z_posterior, actions), axis=-1))
         hidden = self.sequence_block(g.reshape(1, 1, -1))
 
         # Compute prior \hat z_{t+1} ~ p(\hat z | h) and predict next depth image
@@ -248,7 +245,9 @@ class S4WorldModel(nn.Module):
 if __name__ == "__main__":
 
     key = jax.random.PRNGKey(0)
-    input_img = jax.random.normal(key, (1, 270, 480))
+    input_img = jax.random.normal(key, (2, 10, 1, 270, 480))
 
     model = S4WorldModel(discrete_latent_state=False, latent_dim=128)
-    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((1, 4)))["params"]
+    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((5, 10, 4)))[
+        "params"
+    ]
