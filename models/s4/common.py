@@ -10,7 +10,7 @@ class ImageEncoder(nn.Module):
     act: str = "elu"
     c_hid: int = 32
 
-    def setup(self):
+    def setup(self) -> None:
 
         if self.act == "elu":
             self.act_fn = nn.elu
@@ -63,7 +63,9 @@ class ImageEncoder(nn.Module):
         )
         self.dense = nn.Dense(features=self.latent_dim)
 
-    def __call__(self, img):
+    def __call__(self, img: jnp.ndarray) -> jnp.ndarray:
+        batch_size, seq_length = img.shape[:2]
+
         x = self.conv_1(img)
         x = self.act_fn(x)
 
@@ -79,7 +81,7 @@ class ImageEncoder(nn.Module):
         x = self.conv_5(x)
         x = self.act_fn(x)
 
-        x = x.reshape(x.shape[0], -1)  # Flatten grid to feature vector
+        x = x.reshape(batch_size, seq_length, -1)  # Flatten grid to feature vector
         x = self.dense(x)
         return x
 
@@ -90,7 +92,7 @@ class ImageDecoder(nn.Module):
     hidden_channels: int = 32
     act: str = "elu"
 
-    def setup(self):
+    def setup(self) -> None:
 
         if self.act == "elu":
             self.act_fn = nn.elu
@@ -133,11 +135,12 @@ class ImageDecoder(nn.Module):
             padding="SAME",
         )
 
-    def __call__(self, latent):
+    def __call__(self, latent: jnp.ndarray) -> jnp.ndarray:
+        batch_size, seq_length = latent.shape[:2]
         x = self.dense_1(latent)
         x = self.act_fn(x)
         x = self.dense_2(x)
-        x = x.reshape(x.shape[0], 9, 15, 128)
+        x = x.reshape(batch_size, seq_length, 9, 15, 128)
 
         x = self.deconv_1(x)
         x = self.act_fn(x)
@@ -161,15 +164,15 @@ class ImageDecoder(nn.Module):
 if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
-    input_img = random.normal(key, (1, 270, 480))
-    img_encoder = ImageEncoder(c_hid=32, latent_dim=128, act="silu")
+    input_img = random.normal(key, (5, 2, 270, 480))
+    img_encoder = ImageEncoder(c_hid=32, latent_dim=4, act="silu")
 
     params = img_encoder.init(random.PRNGKey(1), input_img)["params"]
     output = img_encoder.apply({"params": params}, input_img)
-    print("Decoder Output Shape: ", output.shape)
+    print("Encoder Output Shape: ", output.shape)
 
     # Test Decoder Implementation
-    input_latent = random.normal(random.PRNGKey(2), (1, 128))
+    input_latent = random.normal(random.PRNGKey(2), (5, 2, 1, 128))
     img_decoder = ImageDecoder(latent_dim=128)
 
     params = img_decoder.init(random.PRNGKey(3), input_latent)["params"]
