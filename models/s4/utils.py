@@ -5,7 +5,9 @@ from tensorflow_probability.substrates import jax as tfp
 
 tfd = tfp.distributions
 tree_map = jax.tree_util.tree_map
-sg = lambda x: tree_map(jax.lax.stop_gradient, x)
+sg = lambda x: tree_map(
+    jax.lax.stop_gradient, x
+)  # stop gradient - used for KL balancing
 
 
 class OneHotDist(tfd.OneHotCategorical):

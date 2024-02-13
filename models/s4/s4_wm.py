@@ -5,7 +5,7 @@ from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
 from common import ImageEncoder, ImageDecoder
 from s4_nn import S4Block
-from utils import OneHotDist
+from utils import OneHotDist, sg
 
 from typing import Dict, Union, Tuple
 
@@ -90,6 +90,38 @@ class S4WorldModel(nn.Module):
         img_prior = img_prior_dist.sample(seed=jax.random.PRNGKey(1))
 
         return img_prior, img_prior_dist
+
+    def compute_loss(
+        self,
+        img_prior_dist: tfd.Distribution,
+        img_posterior: jnp.array,
+        z_posterior_dist: tfd.Distribution,
+        z_prior_dist: tfd.Distriubtion,
+    ) -> None:
+        """_summary_
+
+        Args:
+            img_prior_dist (tfd.Distribution): _description_
+            img_posterior (jnp.array): _description_
+            z_posterior_dist (tfd.Distribution): _description_
+            z_prior_dist (tfd.Distriubtion): _description_
+
+        Returns:
+            jnp.float32: _description_
+        """
+        BETA_REC = 0.8
+        BETA_KL = 0.2
+        ALPHA = 0.8  # KL Balancing parameter
+
+        # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
+        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
+        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
+        kl_loss = ALPHA * dynamics_loss + (1 - ALPHA) * representation_loss
+
+        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
+        total_loss = BETA_REC * reconstruction_loss + BETA_KL * kl_loss
+
+        return total_loss
 
     def _get_distribution_from_statistics(
         self,
