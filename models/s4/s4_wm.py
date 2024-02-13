@@ -52,6 +52,14 @@ class S4WorldModel(nn.Module):
     def get_latent_posterior_from_image(
         self, image: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        """_summary_
+
+        Args:
+            image (jnp.ndarray): _description_
+
+        Returns:
+            Tuple[jnp.ndarray, tfd.Distribution]: _description_
+        """
         embedding = self.encoder(image)
         statistics = self._get_statistics(
             x=embedding,
@@ -68,6 +76,14 @@ class S4WorldModel(nn.Module):
     def get_latent_prior_from_hidden(
         self, hidden: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        """_summary_
+
+        Args:
+            hidden (jnp.ndarray): _description_
+
+        Returns:
+            Tuple[jnp.ndarray, tfd.Distribution]: _description_
+        """
         statistics = self._get_statistics(
             x=hidden,
             name="hidden",
@@ -83,6 +99,14 @@ class S4WorldModel(nn.Module):
     def get_image_prior_from_hidden(
         self, hidden: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        """_summary_
+
+        Args:
+            hidden (jnp.ndarray): _description_
+
+        Returns:
+            Tuple[jnp.ndarray, tfd.Distribution]: _description_
+        """
         x = self.decoder(hidden)
         img_prior_dist = self._get_distribution_from_statistics(
             statistics=x, image=True
@@ -129,6 +153,16 @@ class S4WorldModel(nn.Module):
         discrete: bool = True,
         image: bool = False,
     ) -> tfd.Distribution:
+        """_summary_
+
+        Args:
+            statistics (Union[Dict[str, jnp.ndarray], jnp.ndarray]): _description_
+            discrete (bool, optional): _description_. Defaults to True.
+            image (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            tfd.Distribution: _description_
+        """
         if image:
             mean = statistics.reshape(1, -1).astype(f32)
             std = jnp.ones_like(mean).astype(f32)
@@ -143,6 +177,17 @@ class S4WorldModel(nn.Module):
     def _get_statistics(
         self, x: jnp.ndarray, name: str, discrete: bool = False, unimix: float = 0.0
     ) -> Dict[str, jnp.ndarray]:
+        """_summary_
+
+        Args:
+            x (jnp.ndarray): _description_
+            name (str): _description_
+            discrete (bool, optional): _description_. Defaults to False.
+            unimix (float, optional): _description_. Defaults to 0.0.
+
+        Returns:
+            Dict[str, jnp.ndarray]: _description_
+        """
         if discrete:
             x = self.statistic_heads[name](x)
             logits = x.reshape(x.shape[:1] + (self.latent_dim, self.num_classes))
@@ -160,6 +205,13 @@ class S4WorldModel(nn.Module):
         return {"mean": mean, "std": std}
 
     def __call__(self, img: jnp.ndarray, action: jnp.ndarray):
+        """_summary_
+
+        Args:
+            img (jnp.ndarray): _description_
+            action (jnp.ndarray): _description_
+        """
+
         # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
         z_posterior, z_posterior_dist = self.get_latent_posterior_from_image(img)
 
