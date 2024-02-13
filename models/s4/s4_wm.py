@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
@@ -19,6 +20,9 @@ class S4WorldModel(nn.Module):
     hidden_dim: int = 128
     discrete_latent_state: bool = True
     batch_size: int = 1
+    alpha: float = 0.8
+    beta_rec: float = 0.8
+    beta_kl: float = 0.2
 
     def setup(self) -> None:
         self.num_classes = self.latent_dim
@@ -96,7 +100,7 @@ class S4WorldModel(nn.Module):
         z_prior = z_prior_dist.sample(seed=jax.random.PRNGKey(1))
         return z_prior, z_prior_dist
 
-    def get_image_prior_from_hidden(
+    def get_image_prior(
         self, hidden: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         """_summary_
@@ -120,7 +124,7 @@ class S4WorldModel(nn.Module):
         img_prior_dist: tfd.Distribution,
         img_posterior: jnp.array,
         z_posterior_dist: tfd.Distribution,
-        z_prior_dist: tfd.Distriubtion,
+        z_prior_dist: tfd.Distribution,
     ) -> None:
         """_summary_
 
@@ -140,10 +144,10 @@ class S4WorldModel(nn.Module):
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
-        kl_loss = ALPHA * dynamics_loss + (1 - ALPHA) * representation_loss
+        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
-        total_loss = BETA_REC * reconstruction_loss + BETA_KL * kl_loss
+        total_loss = self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
         return total_loss
 
@@ -224,7 +228,21 @@ class S4WorldModel(nn.Module):
 
         # Compute prior \hat z_{t+1} ~ p(\hat z | h) and predict next depth image
         z_prior, z_prior_dist = self.get_latent_prior_from_hidden(hidden)
-        x_prior = self.get_image_prior_from_hidden(hidden)
+        x_prior, x_prior_dist = self.get_image_prior(
+            jnp.concatenate((hidden, z_prior), axis=-1)
+        )
+
+        loss = self.compute_loss(
+            x_prior_dist,
+            x_prior,
+            z_posterior_dist=z_posterior_dist,
+            z_prior_dist=z_prior_dist,
+        )
+        loss = loss.mean()
+
+        plt.imshow(x_prior.reshape(270, 480))
+        plt.show()
+        print("Loss val", loss)
 
 
 if __name__ == "__main__":
