@@ -53,7 +53,7 @@ class S4WorldModel(nn.Module):
 
         self.input_head = nn.Dense(features=self.latent_dim + self.action_dim)
 
-    def get_latent_posterior_from_image(
+    def get_latent_posteriors_from_images(
         self, image: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         """_summary_
@@ -100,7 +100,7 @@ class S4WorldModel(nn.Module):
         z_prior = z_prior_dist.sample(seed=jax.random.PRNGKey(1))
         return z_prior, z_prior_dist
 
-    def get_image_prior(
+    def get_image_prior_dists(
         self, hidden: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         """_summary_
@@ -112,12 +112,11 @@ class S4WorldModel(nn.Module):
             Tuple[jnp.ndarray, tfd.Distribution]: _description_
         """
         x = self.decoder(hidden)
-        img_prior_dist = self._get_distribution_from_statistics(
+        img_prior_dists = self._get_distribution_from_statistics(
             statistics=x, image=True
         )
-        img_prior = img_prior_dist.sample(seed=jax.random.PRNGKey(1))
 
-        return img_prior, img_prior_dist
+        return img_prior_dists
 
     def compute_loss(
         self,
@@ -137,9 +136,6 @@ class S4WorldModel(nn.Module):
         Returns:
             jnp.float32: _description_
         """
-        BETA_REC = 0.8
-        BETA_KL = 0.2
-        ALPHA = 0.8  # KL Balancing parameter
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
@@ -168,7 +164,9 @@ class S4WorldModel(nn.Module):
             tfd.Distribution: _description_
         """
         if image:
-            mean = statistics.reshape(1, -1).astype(f32)
+            mean = statistics.reshape(
+                statistics.shape[0], statistics.shape[1], -1
+            ).astype(f32)
             std = jnp.ones_like(mean).astype(f32)
             return tfd.MultivariateNormalDiag(mean, std)
         elif discrete:
@@ -208,47 +206,53 @@ class S4WorldModel(nn.Module):
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
         return {"mean": mean, "std": std}
 
-    def __call__(self, img: jnp.ndarray, action: jnp.ndarray):
+    def __call__(self, imgs: jnp.ndarray, actions: jnp.ndarray):
         """_summary_
 
         Args:
-            img (jnp.ndarray): _description_
-            action (jnp.ndarray): _description_
+            img (jnp.ndarray): (batch_size, seq_length, H, W)
+            action (jnp.ndarray): (batch_size, seq_length, num_actions)
         """
 
         # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
-        z_posterior, z_posterior_dist = self.get_latent_posterior_from_image(img)
+        batch_size, seq_length = imgs.shape[:2]
+
+        z_posteriors, z_posterior_dists = self.get_latent_posteriors_from_images(
+            imgs[:, :-1]
+        )
 
         if self.discrete_latent_state:
             shape = (self.batch_size, self.latent_dim * self.num_classes)
-            z_posterior = z_posterior.reshape(shape)
+            z_posteriors = z_posteriors.reshape(shape)
 
-        g = self.input_head(jnp.concatenate((z_posterior, action), axis=-1))
-        hidden = self.sequence_block(g.reshape(1, 1, -1))
+        g = self.input_head(jnp.concatenate((z_posteriors, actions[:, :-1]), axis=-1))
+        hidden = self.sequence_block(g)
 
         # Compute prior \hat z_{t+1} ~ p(\hat z | h) and predict next depth image
-        z_prior, z_prior_dist = self.get_latent_prior_from_hidden(hidden)
-        x_prior, x_prior_dist = self.get_image_prior(
-            jnp.concatenate((hidden, z_prior), axis=-1)
+        z_priors, z_prior_dists = self.get_latent_prior_from_hidden(hidden)
+        x_prior_dists = self.get_image_prior_dists(
+            jnp.concatenate((hidden, z_priors), axis=-1)
+        )
+        img_posts = jnp.squeeze(imgs[:, 1:], axis=-3)
+        img_posts = img_posts.reshape((batch_size, seq_length - 1, -1))
+        loss = self.compute_loss(
+            img_prior_dist=x_prior_dists,
+            img_posterior=img_posts,
+            z_posterior_dist=z_posterior_dists,
+            z_prior_dist=z_prior_dists,
         )
 
-        loss = self.compute_loss(
-            x_prior_dist,
-            x_prior,
-            z_posterior_dist=z_posterior_dist,
-            z_prior_dist=z_prior_dist,
-        )
         loss = loss.mean()
 
-        plt.imshow(x_prior.reshape(270, 480))
-        plt.show()
-        print("Loss val", loss)
+        return loss
 
 
 if __name__ == "__main__":
 
     key = jax.random.PRNGKey(0)
-    input_img = jax.random.normal(key, (1, 270, 480))
+    input_img = jax.random.normal(key, (2, 10, 1, 270, 480))
 
     model = S4WorldModel(discrete_latent_state=False, latent_dim=128)
-    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((1, 4)))["params"]
+    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((2, 10, 4)))[
+        "params"
+    ]
