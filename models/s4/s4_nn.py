@@ -2,8 +2,9 @@ import jax
 import jax.numpy as jnp
 
 from flax import linen as nn
+from functools import partial
 from jax.nn.initializers import normal
-from s4_ssm import (
+from .s4_ssm import (
     hippo_initializer,
     log_step_initializer,
     kernel_DPLR,
@@ -16,16 +17,6 @@ from s4_ssm import (
 The neural network representation of the S4 model
 
 """
-
-
-def cloneLayer(layer):
-    return nn.vmap(
-        layer,
-        in_axes=1,
-        out_axes=1,
-        variable_axes={"params": 1, "cache": 1, "prime": 1},
-        split_rngs={"params": True},
-    )
 
 
 class SequenceBlock(nn.Module):
@@ -185,27 +176,25 @@ class S4Layer(nn.Module):
             return y_s.reshape(-1).real + self.D * u
 
 
+def cloneLayer(layer):
+    return nn.vmap(
+        layer,
+        in_axes=1,
+        out_axes=1,
+        variable_axes={"params": 1, "cache": 1, "prime": 1},
+        split_rngs={"params": True},
+    )
+
+
 S4Layer = cloneLayer(S4Layer)
 
-BatchStackedModel = nn.vmap(
-    StackedModel,
+S4Block = nn.vmap(
+    partial(StackedModel, layer_cls=S4Layer, classification=False, decode=False),
     in_axes=0,
     out_axes=0,
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
     split_rngs={"params": False, "dropout": True},
 )
-
-S4Block = BatchStackedModel(
-    layer_cls=S4Layer,
-    layer={"N": 128, "l_max": 150},
-    d_output=128,
-    classification=False,
-    training=False,
-    decode=True,
-    d_model=256,
-    n_layers=2,
-)
-
 
 if __name__ == "__main__":
     # For this tutorial, construct a global JAX rng key

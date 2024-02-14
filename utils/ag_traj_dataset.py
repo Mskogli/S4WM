@@ -1,5 +1,6 @@
 import torch
 import ujson
+import h5py
 
 from torch.utils.data import Dataset, random_split
 
@@ -38,48 +39,35 @@ class AerialGymTrajDataset(Dataset):
         actions: bool = False,
         states: List[States] = [],
     ) -> None:
-        print("===LOADING DATASET===")
-        with open(json_path) as file:
-            self.lines = file.readlines()
-        print("===DATASET LOADED===")
-
+        self.file = h5py.File(json_path, "r")
         self.device = device
         self.actions = actions
         self.states = states
+        self.num_trajs = 5
 
     def __len__(self) -> int:
-        return len(self.lines)
+        return self.num_trajs
 
     def __getitem__(self, idx) -> torch.tensor:
-        json_object = ujson.loads(self.lines[idx])
+        depth_images = []
+        actions = []
 
-        latents = [torch.tensor(json_object["latents"], device=self.device)]
+        traj_grp = self.file[f"trajectory_{idx}"]
+        for idx, (_, img_data) in enumerate(traj_grp.items()):
+            if idx < 30:
+                depth_images.append(img_data[:])
+                actions.append(img_data.attrs["actions"])
 
-        actions = (
-            [torch.tensor(json_object["action"], device=self.device)]
-            if self.actions
-            else []
-        )
-
-        states = [
-            torch.tensor(
-                json_object["states"],
-                device=self.device,
-            )[:, StateIndices[state][0] : StateIndices[state][1]]
-            for state in self.states
-        ]
-
-        item = torch.cat(latents + states + actions, 1)
-
-        return item
+        imgs = torch.tensor(depth_images, device=self.device)
+        acts = torch.tensor(actions, device=self.device)
+        return imgs, acts
 
 
 def split_dataset(
     dataset: AerialGymTrajDataset, val_split: float
 ) -> Tuple[AerialGymTrajDataset, ...]:  # 2 tuple
-    total_samples = len(dataset.lines)
+    total_samples = dataset.num_trajs
     train_len = int(total_samples * (1 - val_split))
     val_len = total_samples - train_len
 
-    train_data, val_data = random_split(dataset, [train_len, val_len])
-    return train_data, val_data
+    return random_split(dataset, [train_len, val_len])

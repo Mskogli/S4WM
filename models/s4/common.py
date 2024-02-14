@@ -134,7 +134,7 @@ class ImageDecoder(nn.Module):
             padding="SAME",
         )
 
-    def __call__(self, latent: jnp.ndarray) -> jnp.ndarray:
+    def _downsample(self, latent: jnp.ndarray) -> jnp.ndarray:
         x = self.dense_1(latent)
         x = self.act_fn(x)
         x = self.dense_2(x)
@@ -157,12 +157,15 @@ class ImageDecoder(nn.Module):
 
         return jnp.squeeze(x, axis=-1)
 
+    def __call__(self, latent: jnp.ndarray) -> jnp.ndarray:
+        pass
+
 
 if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
     img_encoder = ImageEncoder(c_hid=32, latent_dim=128, act="silu")
-    input_img = random.normal(key, (1, 150, 1, 270, 480))
+    input_img = random.normal(key, (8, 10, 1, 270, 480))
 
     params = img_encoder.init(random.PRNGKey(1), input_img)["params"]
     output = img_encoder.apply({"params": params}, input_img)
@@ -171,9 +174,9 @@ if __name__ == "__main__":
     del output, input_img, params, img_encoder
 
     # Test Decoder Implementation
-    input_latent = random.normal(random.PRNGKey(2), (1, 150, 128))
+    input_latent = random.normal(random.PRNGKey(2), (8, 10, 128))
     img_decoder = ImageDecoder(latent_dim=128)
 
     params = img_decoder.init(random.PRNGKey(3), input_latent)["params"]
     output = img_decoder.apply({"params": params}, input_latent)
-    print("Encoder Output Shape: ", output.shape)
+    print("Decoder Output Shape: ", output.shape)

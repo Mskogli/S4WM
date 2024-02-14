@@ -6,10 +6,10 @@ from .ag_traj_dataset import AerialGymTrajDataset, split_dataset
 def create_quad_depth_trajectories_datasets(bsz=128):
     print("[*] Generating Aerial Gym Trajectory Dataset")
 
-    N_CLASSES, SEQ_LENGTH, IN_DIM = 128, 96, 132
+    N_CLASSES, SEQ_LENGTH, IN_DIM = 128, 29, 132
 
     dataset = AerialGymTrajDataset(
-        "/home/mathias/dev/trajectories.jsonl",
+        "/home/mathias/dev/data/quad_depth_imgs",
         "cpu",
         actions=True,
     )
