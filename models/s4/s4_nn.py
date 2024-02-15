@@ -13,11 +13,6 @@ from .s4_ssm import (
     scan_SSM,
 )
 
-"""
-The neural network representation of the S4 model
-
-"""
-
 
 class SequenceBlock(nn.Module):
     layer_cls: nn.Module
@@ -195,8 +190,3 @@ S4Block = nn.vmap(
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
     split_rngs={"params": False, "dropout": True},
 )
-
-if __name__ == "__main__":
-    # For this tutorial, construct a global JAX rng key
-    # But we don't want it when importing as a library
-    rng = jax.random.PRNGKey(1)

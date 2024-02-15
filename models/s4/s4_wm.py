@@ -45,6 +45,7 @@ class S4WorldModel(nn.Module):
 
         self.encoder = ImageEncoder(latent_dim=self.latent_dim, act="silu")
         self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
+
         self.sequence_block = S4Block(**self.S4_config, training=self.training)
 
         embedding_to_stats_head = nn.Dense(
@@ -170,16 +171,7 @@ class S4WorldModel(nn.Module):
         discrete: bool = True,
         image: bool = False,
     ) -> tfd.Distribution:
-        """_summary_
 
-        Args:
-            statistics (Union[Dict[str, jnp.ndarray], jnp.ndarray]): _description_
-            discrete (bool, optional): _description_. Defaults to True.
-            image (bool, optional): _description_. Defaults to False.
-
-        Returns:
-            tfd.Distribution: _description_
-        """
         if image:
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
@@ -196,17 +188,7 @@ class S4WorldModel(nn.Module):
     def _get_statistics(
         self, x: jnp.ndarray, name: str, discrete: bool = False, unimix: float = 0.0
     ) -> Dict[str, jnp.ndarray]:
-        """_summary_
 
-        Args:
-            x (jnp.ndarray): _description_
-            name (str): _description_
-            discrete (bool, optional): _description_. Defaults to False.
-            unimix (float, optional): _description_. Defaults to 0.0.
-
-        Returns:
-            Dict[str, jnp.ndarray]: _description_
-        """
         if discrete:
             x = self.statistic_heads[name](x)
             logits = x.reshape(x.shape[:2] + (self.num_classes, self.num_classes))

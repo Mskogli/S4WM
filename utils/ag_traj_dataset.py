@@ -1,6 +1,7 @@
 import torch
 import ujson
 import h5py
+import numpy as np
 
 from torch.utils.data import Dataset, random_split
 
@@ -55,11 +56,12 @@ class AerialGymTrajDataset(Dataset):
         traj_grp = self.file[f"trajectory_{idx}"]
         for idx, (_, img_data) in enumerate(traj_grp.items()):
             if idx < 150:
-                depth_images.append(img_data[:])
-                actions.append(img_data.attrs["actions"])
+                depth_images.append(torch.from_numpy(img_data[:]).view(1, 270, 480))
+                actions.append(torch.from_numpy(img_data.attrs["actions"]).view(1, 4))
 
-        imgs = torch.tensor(depth_images, device=self.device)
-        acts = torch.tensor(actions, device=self.device)
+        imgs = torch.cat(depth_images, dim=0)
+        acts = torch.cat(actions, dim=0)
+
         return imgs, acts
 
 

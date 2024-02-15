@@ -1,10 +1,10 @@
 import os
-import shutil
 import hydra
 import jax
 import jax.numpy as np
 import optax
 import torch
+import shutil
 
 from functools import partial
 from flax.training import checkpoints, train_state
@@ -21,12 +21,6 @@ try:
     assert hasattr(wandb, "__version__")  # verify package import not local dir
 except (ImportError, AssertionError):
     wandb = None
-
-
-# @partial(np.vectorize, signature="(c),()->()")
-def cross_entropy_loss(logits, label):
-    loss = optax.l2_loss(logits, label)
-    return loss
 
 
 def map_nested_fn(fn):
@@ -144,7 +138,6 @@ def train_epoch(state, rng, model, trainloader, classification=False):
 def validate(params, model, testloader, classification=False):
     model = model(training=False)
     losses = []
-    init_rng = jax.random.PRNGKey(0)
 
     for batch_idx, batch in enumerate(tqdm(testloader)):
 
@@ -261,7 +254,7 @@ def example_train(
     )
 
     # Loop over epochs
-    best_loss, best_epoch = 10000, 0
+    best_loss, best_epoch = 10000000, 0
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
 
@@ -278,13 +271,22 @@ def example_train(
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
+        print(f"\tVal Loss: {test_loss:.5f} -- Train Loss:")
 
         if test_loss < best_loss:
             best_loss, best_epoch = test_loss, epoch
 
-            if train.checkpoint:
-                suf = f"-{train.suffix}" if train.suffix is not None else ""
-                run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
+            suf = f"-{train.suffix}" if train.suffix is not None else ""
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
+            ckpt_path = checkpoints.save_checkpoint(
+                run_id,
+                state,
+                epoch,
+                keep=train.epochs,
+            )
+            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
+            if os.path.exists(f"{run_id}/best_{best_epoch}"):
+                os.remove(f"{run_id}/best_{best_epoch}")
 
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
