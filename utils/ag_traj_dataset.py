@@ -43,7 +43,7 @@ class AerialGymTrajDataset(Dataset):
         self.device = device
         self.actions = actions
         self.states = states
-        self.num_trajs = 5
+        self.num_trajs = 989
 
     def __len__(self) -> int:
         return self.num_trajs
@@ -54,7 +54,7 @@ class AerialGymTrajDataset(Dataset):
 
         traj_grp = self.file[f"trajectory_{idx}"]
         for idx, (_, img_data) in enumerate(traj_grp.items()):
-            if idx < 30:
+            if idx < 150:
                 depth_images.append(img_data[:])
                 actions.append(img_data.attrs["actions"])
 

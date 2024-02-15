@@ -261,7 +261,7 @@ class S4WorldModel(nn.Module):
 
 
 if __name__ == "__main__":
-    batch_size, seq_length = 2, 10
+    batch_size, seq_length = 8, 150
 
     # Setup
     key = jax.random.PRNGKey(0)

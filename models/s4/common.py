@@ -64,7 +64,7 @@ class ImageEncoder(nn.Module):
         )
         self.dense = nn.Dense(features=self.latent_dim)
 
-    def __call__(self, img: jnp.ndarray) -> jnp.ndarray:
+    def _downsample(self, img: jnp.ndarray) -> jnp.ndarray:
         x = self.conv_1(img)
         x = self.act_fn(x)
 
@@ -83,6 +83,23 @@ class ImageEncoder(nn.Module):
         x = x.reshape(x.shape[0], x.shape[1], -1)  # Flatten grid to feature vector
         x = self.dense(x)
         return x
+
+    def __call__(self, img: jnp.ndarray) -> jnp.ndarray:
+        chunk_size = 15
+        seq_len = 149
+        output = []
+
+        num_chunks = (seq_len + chunk_size - 1) // chunk_size
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = start + chunk_size
+            # Adjust end for the last chunk to not exceed seq_len
+            end = min(end, seq_len)
+            input_chunk = img[:, start:end, :]
+            output.append(jnp.array(self._downsample(input_chunk)))
+
+        output = jnp.concatenate(output, axis=1)
+        return output.reshape(2, 149, 128)
 
 
 class ImageDecoder(nn.Module):
@@ -157,15 +174,32 @@ class ImageDecoder(nn.Module):
 
         return jnp.squeeze(x, axis=-1)
 
-    def __call__(self, latent: jnp.ndarray) -> jnp.ndarray:
-        pass
+    def __call__(self, latents: jnp.ndarray) -> jnp.ndarray:
+        chunk_size = 15
+        seq_len = 149
+        output = []
+
+        latents = latents[:, 0:149, :]
+
+        num_chunks = (seq_len + chunk_size - 1) // chunk_size
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = start + chunk_size
+            # Adjust end for the last chunk to not exceed seq_len
+            end = min(end, seq_len)
+            input_chunk = latents[:, start:end, :]
+            output.append(jnp.array(self._downsample(input_chunk)))
+
+        output = jnp.concatenate(output, axis=1)
+        return output.reshape(2, 149, 270, 480)
 
 
 if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
     img_encoder = ImageEncoder(c_hid=32, latent_dim=128, act="silu")
-    input_img = random.normal(key, (8, 10, 1, 270, 480))
+    input_img_1 = random.normal(key, (8, 149, 1, 270, 480))
+    input_img = random.normal(key, (8, 149, 1, 270, 480))
 
     params = img_encoder.init(random.PRNGKey(1), input_img)["params"]
     output = img_encoder.apply({"params": params}, input_img)
@@ -174,7 +208,7 @@ if __name__ == "__main__":
     del output, input_img, params, img_encoder
 
     # Test Decoder Implementation
-    input_latent = random.normal(random.PRNGKey(2), (8, 10, 128))
+    input_latent = random.normal(random.PRNGKey(2), (8, 150, 128))
     img_decoder = ImageDecoder(latent_dim=128)
 
     params = img_decoder.init(random.PRNGKey(3), input_latent)["params"]
