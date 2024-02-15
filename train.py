@@ -284,9 +284,6 @@ def example_train(
                 epoch,
                 keep=train.epochs,
             )
-            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
-            if os.path.exists(f"{run_id}/best_{best_epoch}"):
-                os.remove(f"{run_id}/best_{best_epoch}")
 
         print(f"\tBest Test Loss: {best_loss:.5f}")
 

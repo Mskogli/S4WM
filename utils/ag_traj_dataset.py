@@ -44,7 +44,7 @@ class AerialGymTrajDataset(Dataset):
         self.device = device
         self.actions = actions
         self.states = states
-        self.num_trajs = 989
+        self.num_trajs = 980
 
     def __len__(self) -> int:
         return self.num_trajs
@@ -55,7 +55,7 @@ class AerialGymTrajDataset(Dataset):
 
         traj_grp = self.file[f"trajectory_{idx}"]
         for idx, (_, img_data) in enumerate(traj_grp.items()):
-            if idx < 150:
+            if idx < 31:
                 depth_images.append(torch.from_numpy(img_data[:]).view(1, 270, 480))
                 actions.append(torch.from_numpy(img_data.attrs["actions"]).view(1, 4))
 

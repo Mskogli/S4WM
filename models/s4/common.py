@@ -8,7 +8,7 @@ from jax.nn.initializers import glorot_uniform, zeros
 
 class ImageEncoder(nn.Module):
     latent_dim: int
-    seq_len: int = 149
+    seq_len: int = 30
     chunk_size: int = 15
     act: str = "elu"
     c_hid: int = 32
@@ -104,7 +104,7 @@ class ImageEncoder(nn.Module):
 
 class ImageDecoder(nn.Module):
     latent_dim: int
-    seq_len: int = 149
+    seq_len: int = 30
     img_h: int = 270
     img_w: int = 480
     chunk_size: int = 15

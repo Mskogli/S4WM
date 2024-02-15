@@ -2,15 +2,10 @@ import jax
 import jax.numpy as jnp
 
 from jax.numpy.linalg import eigh, inv, matrix_power
-from jax.scipy.signal import convolve
-
-"""
-Utilities for computing the convolution kernel and the recurrent representation of the S4 model
-
-"""
+from typing import Callable
 
 
-def log_step_initializer(dt_min=0.001, dt_max=0.1):
+def log_step_initializer(dt_min: float = 0.001, dt_max: float = 0.1) -> Callable:
     def init(key, shape):
         return jax.random.uniform(key, shape) * (
             jnp.log(dt_max) - jnp.log(dt_min)
@@ -19,7 +14,9 @@ def log_step_initializer(dt_min=0.001, dt_max=0.1):
     return init
 
 
-def scan_SSM(Ab, Bb, Cb, u, x0):
+def scan_SSM(
+    Ab: jnp.ndarray, Bb: jnp.ndarray, Cb: jnp.ndarray, u: jnp.ndarray, x0: jnp.ndarray
+) -> jnp.ndarray:
     def step(x_k_1, u_k):
         x_k = Ab @ x_k_1 + Bb @ u_k
         y_k = Cb @ x_k
@@ -28,18 +25,16 @@ def scan_SSM(Ab, Bb, Cb, u, x0):
     return jax.lax.scan(step, x0, u)
 
 
-def causal_convolution(u, K, nofft=False):
-    if nofft:
-        return convolve(u, K, mode="full")[: u.shape[0]]
-    else:
-        assert K.shape[0] == u.shape[0]
-        ud = jnp.fft.rfft(jnp.pad(u, (0, K.shape[0])))
-        Kd = jnp.fft.rfft(jnp.pad(K, (0, u.shape[0])))
-        out = ud * Kd
-        return jnp.fft.irfft(out)[: u.shape[0]]
+def causal_convolution(
+    u: jnp.ndarray, K: jnp.ndarray, nofft: bool = False
+) -> jnp.ndarray:
+    ud = jnp.fft.rfft(jnp.pad(u, (0, K.shape[0])))
+    Kd = jnp.fft.rfft(jnp.pad(K, (0, u.shape[0])))
+    out = ud * Kd
+    return jnp.fft.irfft(out)[: u.shape[0]]
 
 
-def make_HiPPO(N):
+def make_HiPPO(N: jnp.ndarray) -> jnp.ndarray:
     P = jnp.sqrt(1 + 2 * jnp.arange(N))
     A = P[:, jnp.newaxis] * P[jnp.newaxis, :]
     A = jnp.tril(A) - jnp.diag(jnp.arange(N))
@@ -47,13 +42,21 @@ def make_HiPPO(N):
 
 
 @jax.jit
-def cauchy(v, omega, lambd):
+def cauchy(v: jnp.ndarray, omega: jnp.ndarray, lambd: jnp.ndarray) -> jnp.ndarray:
     """Cauchy matrix multiplication: (n), (l), (n) -> (l)"""
     cauchy_dot = lambda _omega: (v / (_omega - lambd)).sum()
     return jax.vmap(cauchy_dot)(omega)
 
 
-def kernel_DPLR(Lambda, P, Q, B, C, step, L):
+def kernel_DPLR(
+    Lambda: jnp.ndarray,
+    P: jnp.ndarray,
+    Q: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    step: float,
+    L: int,
+) -> jnp.ndarray:
     # Evaluate at roots of unity
     # Generating function is (-)z-transform, so we evaluate at (-)root
     Omega_L = jnp.exp((-2j * jnp.pi) * (jnp.arange(L) / L))
@@ -74,7 +77,15 @@ def kernel_DPLR(Lambda, P, Q, B, C, step, L):
     return out.real
 
 
-def discrete_DPLR(Lambda, P, Q, B, C, step, L):
+def discrete_DPLR(
+    Lambda: jnp.ndarray,
+    P: jnp.ndarray,
+    Q: jnp.ndarray,
+    B: jnp.ndarray,
+    C: jnp.ndarray,
+    step: float,
+    L: int,
+) -> jnp.ndarray:
     # Convert parameters to matrices
     B = B[:, jnp.newaxis]
     Ct = C[jnp.newaxis, :]
@@ -101,7 +112,7 @@ def discrete_DPLR(Lambda, P, Q, B, C, step, L):
     return Ab, Bb, Cb.conj()
 
 
-def make_NPLR_HiPPO(N):
+def make_NPLR_HiPPO(N: int) -> jnp.ndarray:
     # Make -HiPPO
     nhippo = make_HiPPO(N)
 
@@ -113,7 +124,7 @@ def make_NPLR_HiPPO(N):
     return nhippo, P, B
 
 
-def make_DPLR_HiPPO(N):
+def make_DPLR_HiPPO(N: int) -> jnp.ndarray:
     """Diagonalize NPLR representation"""
     A, P, B = make_NPLR_HiPPO(N)
 
@@ -140,6 +151,6 @@ def init(x):
     return _init
 
 
-def hippo_initializer(N):
+def hippo_initializer(N: int) -> jnp.ndarray:
     Lambda, P, B, _ = make_DPLR_HiPPO(N)
     return init(Lambda.real), init(Lambda.imag), init(P), init(B)
