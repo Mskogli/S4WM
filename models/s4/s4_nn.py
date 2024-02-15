@@ -2,8 +2,10 @@ import jax
 import jax.numpy as jnp
 
 from flax import linen as nn
+from functools import partial
 from jax.nn.initializers import normal
-from s4_ssm import (
+
+from .s4_ssm import (
     hippo_initializer,
     log_step_initializer,
     kernel_DPLR,
@@ -11,21 +13,6 @@ from s4_ssm import (
     causal_convolution,
     scan_SSM,
 )
-
-"""
-The neural network representation of the S4 model
-
-"""
-
-
-def cloneLayer(layer):
-    return nn.vmap(
-        layer,
-        in_axes=1,
-        out_axes=1,
-        variable_axes={"params": 1, "cache": 1, "prime": 1},
-        split_rngs={"params": True},
-    )
 
 
 class SequenceBlock(nn.Module):
@@ -36,10 +23,10 @@ class SequenceBlock(nn.Module):
     prenorm: bool = True
     glu: bool = True
     training: bool = True
-    decode: bool = False
+    rnn_mode: bool = False
 
-    def setup(self):
-        self.seq = self.layer_cls(**self.layer, decode=self.decode)
+    def setup(self) -> None:
+        self.seq = self.layer_cls(**self.layer, rnn_mode=self.rnn_mode)
         self.norm = nn.LayerNorm()
         self.out = nn.Dense(self.d_model)
         if self.glu:
@@ -50,7 +37,7 @@ class SequenceBlock(nn.Module):
             deterministic=not self.training,
         )
 
-    def __call__(self, x):
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         skip = x
         if self.prenorm:
             x = self.norm(x)
@@ -75,11 +62,10 @@ class StackedModel(nn.Module):
     prenorm: bool = True
     dropout: float = 0.0
     training: bool = True
-    classification: bool = False
     embedding: bool = False
-    decode: bool = False
+    rnn_mode: bool = False
 
-    def setup(self):
+    def setup(self) -> None:
         self.encoder = nn.Dense(self.d_model)
         self.decoder = nn.Dense(self.d_output)
         self.layers = [
@@ -90,12 +76,12 @@ class StackedModel(nn.Module):
                 d_model=self.d_model,
                 dropout=self.dropout,
                 training=self.training,
-                decode=self.decode,
+                rnn_mode=self.rnn_mode,
             )
             for _ in range(self.n_layers)
         ]
 
-    def __call__(self, x):
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         x = self.encoder(x)
         for layer in self.layers:
             x = layer(x)
@@ -107,7 +93,7 @@ class StackedModel(nn.Module):
 class S4Layer(nn.Module):
     N: int
     l_max: int
-    decode: bool = False
+    rnn_mode: bool = False
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)
     lr = {
@@ -118,7 +104,7 @@ class S4Layer(nn.Module):
         "log_step": 0.1,
     }
 
-    def setup(self):
+    def setup(self) -> None:
         # Learned Parameters (C is complex!)
         init_A_re, init_A_im, init_P, init_B = hippo_initializer(self.N)
         self.Lambda_re = self.param("Lambda_re", init_A_re, (self.N,))
@@ -135,7 +121,7 @@ class S4Layer(nn.Module):
         self.D = self.param("D", nn.initializers.ones, (1,))
         self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
 
-        if not self.decode:
+        if not self.rnn_mode:
             # CNN mode, compute kernel.
             self.K = kernel_DPLR(
                 self.Lambda,
@@ -172,10 +158,9 @@ class S4Layer(nn.Module):
                 "cache", "cache_x_k", jnp.zeros, (self.N,), jnp.complex64
             )
 
-    def __call__(self, u):
-        # This is identical to SSM Layer
-        if not self.decode:
-            # CNN Mode
+    def __call__(self, u: jnp.ndarray) -> jnp.ndarray:
+        if not self.rnn_mode:
+            # CNN Mode - paralell forward pass
             return causal_convolution(u, self.K) + self.D * u
         else:
             # RNN Mode
@@ -185,29 +170,22 @@ class S4Layer(nn.Module):
             return y_s.reshape(-1).real + self.D * u
 
 
+def cloneLayer(layer):
+    return nn.vmap(
+        layer,
+        in_axes=1,
+        out_axes=1,
+        variable_axes={"params": 1, "cache": 1, "prime": 1},
+        split_rngs={"params": True},
+    )
+
+
 S4Layer = cloneLayer(S4Layer)
 
-BatchStackedModel = nn.vmap(
-    StackedModel,
+S4Block = nn.vmap(
+    partial(StackedModel, layer_cls=S4Layer, rnn_mode=False),
     in_axes=0,
     out_axes=0,
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},
     split_rngs={"params": False, "dropout": True},
 )
-
-S4Block = BatchStackedModel(
-    layer_cls=S4Layer,
-    layer={"N": 128, "l_max": 150},
-    d_output=128,
-    classification=False,
-    training=False,
-    decode=True,
-    d_model=256,
-    n_layers=2,
-)
-
-
-if __name__ == "__main__":
-    # For this tutorial, construct a global JAX rng key
-    # But we don't want it when importing as a library
-    rng = jax.random.PRNGKey(1)

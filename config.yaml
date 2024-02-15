@@ -2,12 +2,21 @@ dataset: quad_depth_trajectories
 layer: s4
 seed: 0
 
+wm:
+  latent_dim: 128
+  num_actions: 4
+  alpha: 0.8
+  beta_rec: 0.8
+  beta_kl: 0.2
+  discrete_latent_state: False
+
 model:
-  d_model: 256
-  n_layers: 5
+  d_model: 128
+  d_output: 1024
+  n_layers: 2
   layer:
-    l_max: 96
-    N: 128
+    l_max: 15
+    N: 64
 
 train:
   epochs: 100
@@ -24,11 +33,3 @@ wandb:
   mode: disabled
   project: s4
   entity: null
-
-test:
-  prediction_length: 3 # use prediction length > 1 to "dream"
-  context_length: 80 
-  decode: True
-  vizualise: True
-  rng_seed: 0
-  ckpt_dir: checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.001-bsz=256/checkpoint_77

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from omegaconf import DictConfig
 from flax.training import checkpoints
 from utils.ag_traj_dataset import AerialGymTrajDataset
-from models.s4 import BatchStackedModel, S4Layer
+from models.s4 import S4Block, S4Layer
 from sevae.inference.scripts.VAENetworkInterface import VAENetworkInterface
 
 
@@ -42,7 +42,7 @@ def s4_RNN_inference(model_conf: DictConfig, test_conf: DictConfig) -> None:
     torch.random.manual_seed(0)
     init_rng = jax.random.PRNGKey(1)
 
-    model = BatchStackedModel(
+    model = S4Block(
         layer_cls=S4Layer,
         d_output=128,
         classification=False,

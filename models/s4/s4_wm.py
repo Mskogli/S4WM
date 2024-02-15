@@ -4,9 +4,11 @@ import matplotlib.pyplot as plt
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
-from common import ImageEncoder, ImageDecoder
-from s4_nn import S4Block
-from utils import OneHotDist, sg
+from omegaconf import DictConfig
+
+from .common import ImageEncoder, ImageDecoder
+from .s4_nn import S4Block
+from .utils import OneHotDist, sg
 
 from typing import Dict, Union, Tuple
 
@@ -15,21 +17,36 @@ f32 = jnp.float32
 
 
 class S4WorldModel(nn.Module):
+    """Structured State Space Sequence (S4) based world model
+
+    Args:
+        nn (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+
+    S4_config: DictConfig
+
     latent_dim: int = 128
-    action_dim: int = 4
-    hidden_dim: int = 128
-    discrete_latent_state: bool = True
-    batch_size: int = 1
+    hidden_dim: int = 512
+    num_actions: int = 4
     alpha: float = 0.8
     beta_rec: float = 0.8
     beta_kl: float = 0.2
+    discrete_latent_state: bool = False
+    training: bool = False
 
     def setup(self) -> None:
-        self.num_classes = self.latent_dim
+        self.num_classes = (
+            jnp.sqrt(self.latent_dim) if self.discrete_latent_state else None
+        )
+        self.seed = jax.random.PRNGKey(0)
 
         self.encoder = ImageEncoder(latent_dim=self.latent_dim, act="silu")
         self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
-        self.sequence_block = S4Block
+
+        self.sequence_block = S4Block(**self.S4_config, training=self.training)
 
         embedding_to_stats_head = nn.Dense(
             features=(
@@ -51,7 +68,7 @@ class S4WorldModel(nn.Module):
             "hidden": hidden_to_stats_head,
         }
 
-        self.input_head = nn.Dense(features=self.latent_dim + self.action_dim)
+        self.input_head = nn.Dense(features=self.latent_dim + self.num_actions)
 
     def get_latent_posteriors_from_images(
         self, image: jnp.ndarray
@@ -74,7 +91,7 @@ class S4WorldModel(nn.Module):
         z_posterior_dist = self._get_distribution_from_statistics(
             statistics=statistics, discrete=self.discrete_latent_state
         )
-        z_posterior = z_posterior_dist.sample(seed=jax.random.PRNGKey(1))
+        z_posterior = z_posterior_dist.sample(seed=self.seed)
         return z_posterior, z_posterior_dist
 
     def get_latent_prior_from_hidden(
@@ -97,7 +114,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist = self._get_distribution_from_statistics(
             statistics=statistics, discrete=self.discrete_latent_state
         )
-        z_prior = z_prior_dist.sample(seed=jax.random.PRNGKey(1))
+        z_prior = z_prior_dist.sample(seed=self.seed)
         return z_prior, z_prior_dist
 
     def get_image_prior_dists(
@@ -115,8 +132,9 @@ class S4WorldModel(nn.Module):
         img_prior_dists = self._get_distribution_from_statistics(
             statistics=x, image=True
         )
+        img_priors = img_prior_dists.sample(seed=self.seed)
 
-        return img_prior_dists
+        return img_priors, img_prior_dists
 
     def compute_loss(
         self,
@@ -153,16 +171,7 @@ class S4WorldModel(nn.Module):
         discrete: bool = True,
         image: bool = False,
     ) -> tfd.Distribution:
-        """_summary_
 
-        Args:
-            statistics (Union[Dict[str, jnp.ndarray], jnp.ndarray]): _description_
-            discrete (bool, optional): _description_. Defaults to True.
-            image (bool, optional): _description_. Defaults to False.
-
-        Returns:
-            tfd.Distribution: _description_
-        """
         if image:
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
@@ -179,20 +188,10 @@ class S4WorldModel(nn.Module):
     def _get_statistics(
         self, x: jnp.ndarray, name: str, discrete: bool = False, unimix: float = 0.0
     ) -> Dict[str, jnp.ndarray]:
-        """_summary_
 
-        Args:
-            x (jnp.ndarray): _description_
-            name (str): _description_
-            discrete (bool, optional): _description_. Defaults to False.
-            unimix (float, optional): _description_. Defaults to 0.0.
-
-        Returns:
-            Dict[str, jnp.ndarray]: _description_
-        """
         if discrete:
             x = self.statistic_heads[name](x)
-            logits = x.reshape(x.shape[:1] + (self.latent_dim, self.num_classes))
+            logits = x.reshape(x.shape[:2] + (self.num_classes, self.num_classes))
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -214,45 +213,46 @@ class S4WorldModel(nn.Module):
             action (jnp.ndarray): (batch_size, seq_length, num_actions)
         """
 
-        # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
         batch_size, seq_length = imgs.shape[:2]
 
+        # Compute the latent state z_t and the posterior distribution z_t ~ q(z | x)
         z_posteriors, z_posterior_dists = self.get_latent_posteriors_from_images(
             imgs[:, :-1]
         )
 
         if self.discrete_latent_state:
-            shape = (self.batch_size, self.latent_dim * self.num_classes)
-            z_posteriors = z_posteriors.reshape(shape)
+            z_posteriors = z_posteriors.reshape(
+                (batch_size, seq_length, self.num_classes * self.num_classes)
+            )
 
         g = self.input_head(jnp.concatenate((z_posteriors, actions[:, :-1]), axis=-1))
         hidden = self.sequence_block(g)
 
         # Compute prior \hat z_{t+1} ~ p(\hat z | h) and predict next depth image
         z_priors, z_prior_dists = self.get_latent_prior_from_hidden(hidden)
-        x_prior_dists = self.get_image_prior_dists(
+        img_priors, img_prior_dists = self.get_image_prior_dists(
             jnp.concatenate((hidden, z_priors), axis=-1)
         )
-        img_posts = jnp.squeeze(imgs[:, 1:], axis=-3)
-        img_posts = img_posts.reshape((batch_size, seq_length - 1, -1))
-        loss = self.compute_loss(
-            img_prior_dist=x_prior_dists,
-            img_posterior=img_posts,
-            z_posterior_dist=z_posterior_dists,
-            z_prior_dist=z_prior_dists,
+
+        ret = (
+            (z_priors, z_prior_dists),
+            (z_posteriors, z_posterior_dists),
+            (img_priors, img_prior_dists),
         )
-
-        loss = loss.mean()
-
-        return loss
+        return ret
 
 
 if __name__ == "__main__":
+    batch_size, seq_length = 8, 150
 
+    # Setup
     key = jax.random.PRNGKey(0)
-    input_img = jax.random.normal(key, (2, 10, 1, 270, 480))
+    dummy_input_img = jax.random.normal(key, (batch_size, seq_length, 1, 270, 480))
+    dummy_input_actions = jax.random.normal(key, (batch_size, seq_length, 4))
 
     model = S4WorldModel(discrete_latent_state=False, latent_dim=128)
-    params = model.init(jax.random.PRNGKey(1), input_img, jnp.zeros((2, 10, 4)))[
-        "params"
-    ]
+    params = model.init(jax.random.PRNGKey(1), dummy_input_img, dummy_input_actions)
+    print("Model initialized")
+
+    model_loss = model.apply(params, dummy_input_img, dummy_input_actions)
+    print("Loss: ", model_loss)

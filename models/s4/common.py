@@ -8,6 +8,8 @@ from jax.nn.initializers import glorot_uniform, zeros
 
 class ImageEncoder(nn.Module):
     latent_dim: int
+    seq_len: int = 30
+    chunk_size: int = 15
     act: str = "elu"
     c_hid: int = 32
 
@@ -64,7 +66,7 @@ class ImageEncoder(nn.Module):
         )
         self.dense = nn.Dense(features=self.latent_dim)
 
-    def __call__(self, img: jnp.ndarray) -> jnp.ndarray:
+    def _downsample(self, img: jnp.ndarray) -> jnp.ndarray:
         x = self.conv_1(img)
         x = self.act_fn(x)
 
@@ -84,9 +86,28 @@ class ImageEncoder(nn.Module):
         x = self.dense(x)
         return x
 
+    def __call__(self, imgs: jnp.ndarray) -> jnp.ndarray:
+        output = []
+
+        num_chunks = (self.seq_len + self.chunk_size - 1) // self.chunk_size
+        for i in range(num_chunks):
+            start = i * self.chunk_size
+            end = start + self.chunk_size
+            # Adjust end for the last chunk to not exceed seq_len
+            end = min(end, self.seq_len)
+            input_chunk = imgs[:, start:end, :]
+            output.append(jnp.array(self._downsample(input_chunk)))
+
+        output = jnp.concatenate(output, axis=1)
+        return output.reshape(-1, self.seq_len, self.latent_dim)
+
 
 class ImageDecoder(nn.Module):
     latent_dim: int
+    seq_len: int = 30
+    img_h: int = 270
+    img_w: int = 480
+    chunk_size: int = 15
     output_channels: int = 1
     hidden_channels: int = 32
     act: str = "elu"
@@ -134,7 +155,7 @@ class ImageDecoder(nn.Module):
             padding="SAME",
         )
 
-    def __call__(self, latent: jnp.ndarray) -> jnp.ndarray:
+    def _upsample(self, latent: jnp.ndarray) -> jnp.ndarray:
         x = self.dense_1(latent)
         x = self.act_fn(x)
         x = self.dense_2(x)
@@ -157,12 +178,28 @@ class ImageDecoder(nn.Module):
 
         return jnp.squeeze(x, axis=-1)
 
+    def __call__(self, latents: jnp.ndarray) -> jnp.ndarray:
+        output = []
+
+        num_chunks = (self.seq_len + self.chunk_size - 1) // self.chunk_size
+        for i in range(num_chunks):
+            start = i * self.chunk_size
+            end = start + self.chunk_size
+            # Adjust end for the last chunk to not exceed seq_len
+            end = min(end, self.seq_len)
+            input_chunk = latents[:, start:end, :]
+            output.append(jnp.array(self._upsample(input_chunk)))
+
+        output = jnp.concatenate(output, axis=1)
+        return output.reshape(-1, self.seq_len, self.img_h, self.img_w)
+
 
 if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
     img_encoder = ImageEncoder(c_hid=32, latent_dim=128, act="silu")
-    input_img = random.normal(key, (1, 150, 1, 270, 480))
+    input_img_1 = random.normal(key, (8, 149, 1, 270, 480))
+    input_img = random.normal(key, (8, 149, 1, 270, 480))
 
     params = img_encoder.init(random.PRNGKey(1), input_img)["params"]
     output = img_encoder.apply({"params": params}, input_img)
@@ -171,9 +208,9 @@ if __name__ == "__main__":
     del output, input_img, params, img_encoder
 
     # Test Decoder Implementation
-    input_latent = random.normal(random.PRNGKey(2), (1, 150, 128))
+    input_latent = random.normal(random.PRNGKey(2), (8, 149, 128))
     img_decoder = ImageDecoder(latent_dim=128)
 
     params = img_decoder.init(random.PRNGKey(3), input_latent)["params"]
     output = img_decoder.apply({"params": params}, input_latent)
-    print("Encoder Output Shape: ", output.shape)
+    print("Decoder Output Shape: ", output.shape)

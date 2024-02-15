@@ -1,17 +1,17 @@
 import os
-import shutil
 import hydra
 import jax
 import jax.numpy as np
 import optax
 import torch
+import shutil
 
 from functools import partial
 from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from models.s4 import BatchStackedModel, S4Layer
+from models.s4 import S4WorldModel, S4Layer
 from utils.datasets import Datasets
 
 try:
@@ -21,12 +21,6 @@ try:
     assert hasattr(wandb, "__version__")  # verify package import not local dir
 except (ImportError, AssertionError):
     wandb = None
-
-
-# @partial(np.vectorize, signature="(c),()->()")
-def cross_entropy_loss(logits, label):
-    loss = optax.l2_loss(logits, label)
-    return loss
 
 
 def map_nested_fn(fn):
@@ -54,9 +48,18 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
+    data = next(iter(trainloader))
+    input_depth_imgs, input_actions = (
+        np.expand_dims(data[0].numpy(), axis=-3),
+        data[1].numpy(),
+    )
+
+    print("Shapes: ", input_depth_imgs.shape, input_actions.shape)
+
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
-        np.array(next(iter(trainloader))[:, :-1, :].numpy()),
+        input_depth_imgs,
+        input_actions,
     )
 
     # Note: Added immediate `unfreeze()` to play well w/ Optax. See below!
@@ -94,9 +97,11 @@ def create_train_state(
     # Print parameter count
     _is_complex = lambda x: x.dtype in [np.complex64, np.complex128]
     param_sizes = map_nested_fn(
-        lambda k, param: param.size * (2 if _is_complex(param) else 1)
-        if lr_layer.get(k, lr) > 0.0
-        else 0
+        lambda k, param: (
+            param.size * (2 if _is_complex(param) else 1)
+            if lr_layer.get(k, lr) > 0.0
+            else 0
+        )
     )(params)
     print(f"[*] Trainable Parameters: {sum(jax.tree_leaves(param_sizes))}")
     print(f"[*] Total training steps: {total_steps}")
@@ -105,26 +110,25 @@ def create_train_state(
 
 
 def train_epoch(state, rng, model, trainloader, classification=False):
-    # Store Metrics
     model = model(training=True)
     batch_losses = []
 
     for batch_idx, batch in enumerate(tqdm(trainloader)):
-        inputs = np.array(batch[:, :-1, :].numpy())
-        labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
+        batch_depth_imgs, batch_actions = (
+            np.expand_dims(batch[0].numpy(), axis=-3),
+            batch[1].numpy(),
+        )
 
         rng, drop_rng = jax.random.split(rng)
         state, loss = train_step(
             state,
             drop_rng,
-            inputs,
-            labels,
+            batch_depth_imgs,
+            batch_actions,
             model,
-            classification=classification,
         )
         batch_losses.append(loss)
 
-    # Return average loss over batches
     return (
         state,
         np.mean(np.array(batch_losses)),
@@ -134,30 +138,53 @@ def train_epoch(state, rng, model, trainloader, classification=False):
 def validate(params, model, testloader, classification=False):
     model = model(training=False)
     losses = []
-    for batch_idx, batch in enumerate(tqdm(testloader)):
-        inputs = np.array(batch[:, :-1, :].numpy())
-        labels = np.array(batch[:, 1:, :128].numpy())  # Not the most efficient...
 
-        loss = eval_step(inputs, labels, params, model, classification=classification)
+    for batch_idx, batch in enumerate(tqdm(testloader)):
+
+        batch_depth_imgs, batch_actions = (
+            np.expand_dims(batch[0].numpy(), axis=-3),
+            batch[1].numpy(),
+        )
+
+        loss = eval_step(
+            batch_depth_imgs,
+            batch_actions,
+            params,
+            model,
+            classification=classification,
+        )
         losses.append(loss)
 
     return np.mean(np.array(losses))
 
 
-@partial(jax.jit, static_argnums=(4, 5))
-def train_step(state, rng, batch_inputs, batch_labels, model, classification=False):
+@partial(jax.jit, static_argnums=(4))
+def train_step(state, rng, batch_imgs, batch_actions, model):
+
     def loss_fn(params):
-        logits, _ = model.apply(
+
+        ret = model.apply(
             {"params": params},
-            batch_inputs,
+            batch_imgs,  # Depth images
+            batch_actions,  # Actions
             rngs={"dropout": rng},
             mutable=["intermediates"],
         )
 
-        loss = cross_entropy_loss(logits, batch_labels)
+        z_prior, z_posterior, img_prior = ret[0]
+
+        img_posts = np.squeeze(batch_imgs[:, 1:], axis=-3)
+        img_posts = img_posts.reshape((img_posts.shape[0], img_posts.shape[1], -1))
+
+        loss = model.compute_loss(
+            img_prior_dist=img_prior[-1],
+            img_posterior=img_posts,
+            z_posterior_dist=z_posterior[-1],
+            z_prior_dist=z_prior[-1],
+        )
         loss = np.mean(loss)
 
-        return loss, logits
+        return loss, None
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (loss, _), grads = grad_fn(state.params)
@@ -166,9 +193,22 @@ def train_step(state, rng, batch_inputs, batch_labels, model, classification=Fal
 
 
 @partial(jax.jit, static_argnums=(3, 4))
-def eval_step(batch_inputs, batch_labels, params, model, classification=False):
-    logits = model.apply({"params": params}, batch_inputs)
-    loss = np.mean(cross_entropy_loss(logits, batch_labels))
+def eval_step(batch_imgs, batch_actions, params, model, classification=False):
+
+    z_prior, z_posterior, img_prior = model.apply(
+        {"params": params}, batch_imgs, batch_actions
+    )
+    img_posts = np.squeeze(batch_imgs[:, 1:], axis=-3)
+    img_posts = img_posts.reshape((img_posts.shape[0], img_posts.shape[1], -1))
+
+    loss = model.compute_loss(
+        img_prior_dist=img_prior[-1],
+        img_posterior=img_posts,
+        z_posterior_dist=z_posterior[-1],
+        z_prior_dist=z_prior[-1],
+    )
+    loss = np.mean(loss)
+
     return loss
 
 
@@ -176,20 +216,14 @@ def example_train(
     dataset: str,
     layer: str,
     seed: int,
+    wm: DictConfig,
     model: DictConfig,
     train: DictConfig,
 ):
-    # Warnings and sanity checks
-    if not train.checkpoint:
-        print("[*] Warning: models are not being checkpoint")
-
     print("[*] Setting Randomness...")
     torch.random.manual_seed(seed)  # For dataloader order
     key = jax.random.PRNGKey(seed)
     key, rng, train_rng = jax.random.split(key, num=3)
-
-    # Check if classification dataset
-    classification = "classification" in dataset
 
     # Create dataset
     create_dataset_fn = Datasets[dataset]
@@ -206,13 +240,7 @@ def example_train(
 
     print(f"[*] Starting `{layer}` Training on `{dataset}` =>> Initializing...")
 
-    model_cls = partial(
-        BatchStackedModel,
-        layer_cls=layer_cls,
-        d_output=n_classes,
-        classification=classification,
-        **model,
-    )
+    model_cls = partial(S4WorldModel, S4_config=model, **wm)
 
     state = create_train_state(
         rng,
@@ -226,27 +254,28 @@ def example_train(
     )
 
     # Loop over epochs
-    best_loss, best_epoch = 10000, 0
+    best_loss, best_epoch = 10000000, 0
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
+
         state, train_loss = train_epoch(
             state,
             train_rng,
             model_cls,
             trainloader,
-            classification=classification,
+            classification=False,
         )
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
-        test_loss = validate(
-            state.params, model_cls, testloader, classification=classification
-        )
+        test_loss = validate(state.params, model_cls, testloader, classification=False)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
+        print(f"\tVal Loss: {test_loss:.5f} -- Train Loss:")
 
-        # Save a checkpoint each epoch & handle best (test loss... not "copacetic" but ehh)
-        if train.checkpoint:
+        if test_loss < best_loss:
+            best_loss, best_epoch = test_loss, epoch
+
             suf = f"-{train.suffix}" if train.suffix is not None else ""
             run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
             ckpt_path = checkpoints.save_checkpoint(
@@ -255,10 +284,6 @@ def example_train(
                 epoch,
                 keep=train.epochs,
             )
-            print("ckpt_path", ckpt_path)
-
-        if test_loss < best_loss:
-            best_loss, best_epoch = test_loss, epoch
 
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
@@ -274,8 +299,12 @@ def example_train(
             wandb.run.summary["Best Epoch"] = best_epoch
 
 
-@hydra.main(version_base=None, config_path="models/s4", config_name="config")
+@hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".9"
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
     print(OmegaConf.to_yaml(cfg))
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
 
