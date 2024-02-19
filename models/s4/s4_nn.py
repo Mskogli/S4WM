@@ -21,7 +21,7 @@ class SequenceBlock(nn.Module):
     dropout: float
     d_model: int
     prenorm: bool = True
-    glu: bool = True
+    glu: bool = False
     training: bool = True
     rnn_mode: bool = False
 
@@ -66,8 +66,6 @@ class StackedModel(nn.Module):
     rnn_mode: bool = False
 
     def setup(self) -> None:
-        self.encoder = nn.Dense(self.d_model)
-        self.decoder = nn.Dense(self.d_output)
         self.layers = [
             SequenceBlock(
                 layer_cls=self.layer_cls,
@@ -82,11 +80,9 @@ class StackedModel(nn.Module):
         ]
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        x = self.encoder(x)
         for layer in self.layers:
             x = layer(x)
         x = nn.gelu(x)
-        x = self.decoder(x)
         return x
 
 

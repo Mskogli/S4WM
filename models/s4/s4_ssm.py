@@ -133,7 +133,6 @@ def make_DPLR_HiPPO(N: int) -> jnp.ndarray:
     # Check skew symmetry
     S_diag = jnp.diagonal(S)
     Lambda_real = jnp.mean(S_diag) * jnp.ones_like(S_diag)
-    # assert jnp.allclose(Lambda_real, S_diag, atol=1e-3)
 
     # Diagonalize S to V \Lambda V^*
     Lambda_imag, V = eigh(S * -1j)

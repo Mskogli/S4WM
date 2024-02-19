@@ -3,8 +3,6 @@ import hydra
 import jax
 import jax.numpy as np
 import optax
-import torch
-import shutil
 
 from functools import partial
 from flax.training import checkpoints, train_state
@@ -38,7 +36,6 @@ def map_nested_fn(fn):
 def create_train_state(
     rng,
     model_cls,
-    trainloader,
     lr=1e-3,
     lr_layer=None,
     lr_schedule=False,
@@ -48,21 +45,15 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    data = next(iter(trainloader))
-    input_depth_imgs, input_actions = (
-        np.expand_dims(data[0].numpy(), axis=-3),
-        data[1].numpy(),
-    )
-
-    print("Shapes: ", input_depth_imgs.shape, input_actions.shape)
+    init_depth = jax.random.normal(init_rng, (2, 20, 1, 270, 480))
+    init_actions = jax.random.normal(init_rng, (2, 20, 4))
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
-        input_depth_imgs,
-        input_actions,
+        init_depth,
+        init_actions,
     )
 
-    # Note: Added immediate `unfreeze()` to play well w/ Optax. See below!
     params = params["params"]
 
     if lr_schedule:
@@ -103,31 +94,34 @@ def create_train_state(
             else 0
         )
     )(params)
+
     print(f"[*] Trainable Parameters: {sum(jax.tree_leaves(param_sizes))}")
     print(f"[*] Total training steps: {total_steps}")
 
-    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+    return (
+        train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx),
+        model,
+    )
 
 
-def train_epoch(state, rng, model, trainloader, classification=False):
-    model = model(training=True)
+def train_epoch(state, rng, model, trainloader):
     batch_losses = []
 
-    for batch_idx, batch in enumerate(tqdm(trainloader)):
-        batch_depth_imgs, batch_actions = (
-            np.expand_dims(batch[0].numpy(), axis=-3),
-            batch[1].numpy(),
-        )
-
+    for batch_depth, batch_actions in tqdm(trainloader):
         rng, drop_rng = jax.random.split(rng)
+        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
+            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
+        )
         state, loss = train_step(
             state,
             drop_rng,
-            batch_depth_imgs,
+            batch_depth,
             batch_actions,
+            batch_depth_labels,
             model,
         )
         batch_losses.append(loss)
+        print("Loss: ", loss)
 
     return (
         state,
@@ -135,37 +129,34 @@ def train_epoch(state, rng, model, trainloader, classification=False):
     )
 
 
-def validate(params, model, testloader, classification=False):
-    model = model(training=False)
+def validate(params, model, testloader):
     losses = []
 
-    for batch_idx, batch in enumerate(tqdm(testloader)):
-
-        batch_depth_imgs, batch_actions = (
-            np.expand_dims(batch[0].numpy(), axis=-3),
-            batch[1].numpy(),
+    for batch_depth, batch_actions in tqdm(testloader):
+        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
+            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
         )
 
         loss = eval_step(
-            batch_depth_imgs,
+            batch_depth,
             batch_actions,
+            batch_depth_labels,
             params,
             model,
-            classification=classification,
         )
-        losses.append(loss)
 
+        losses.append(loss)
     return np.mean(np.array(losses))
 
 
-@partial(jax.jit, static_argnums=(4))
-def train_step(state, rng, batch_imgs, batch_actions, model):
+@partial(jax.jit, static_argnums=5)
+def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
 
     def loss_fn(params):
 
         ret = model.apply(
             {"params": params},
-            batch_imgs,  # Depth images
+            batch_depth,  # Depth images
             batch_actions,  # Actions
             rngs={"dropout": rng},
             mutable=["intermediates"],
@@ -173,40 +164,37 @@ def train_step(state, rng, batch_imgs, batch_actions, model):
 
         z_prior, z_posterior, img_prior = ret[0]
 
-        img_posts = np.squeeze(batch_imgs[:, 1:], axis=-3)
-        img_posts = img_posts.reshape((img_posts.shape[0], img_posts.shape[1], -1))
-
         loss = model.compute_loss(
             img_prior_dist=img_prior[-1],
-            img_posterior=img_posts,
-            z_posterior_dist=z_posterior[-1],
+            img_posterior=batch_depth_labels,
+            z_posterior_dist=z_posterior[-1][:, 1:],
             z_prior_dist=z_prior[-1],
         )
+
         loss = np.mean(loss)
 
-        return loss, None
+        return loss
 
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, _), grads = grad_fn(state.params)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=False)
+    loss, grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
+
     return state, loss
 
 
-@partial(jax.jit, static_argnums=(3, 4))
-def eval_step(batch_imgs, batch_actions, params, model, classification=False):
+def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
     z_prior, z_posterior, img_prior = model.apply(
-        {"params": params}, batch_imgs, batch_actions
+        {"params": params}, batch_depth, batch_actions
     )
-    img_posts = np.squeeze(batch_imgs[:, 1:], axis=-3)
-    img_posts = img_posts.reshape((img_posts.shape[0], img_posts.shape[1], -1))
 
     loss = model.compute_loss(
         img_prior_dist=img_prior[-1],
-        img_posterior=img_posts,
-        z_posterior_dist=z_posterior[-1],
+        img_posterior=batch_depth_labels,
+        z_posterior_dist=z_posterior[-1][:, 1:],
         z_prior_dist=z_prior[-1],
     )
+
     loss = np.mean(loss)
 
     return loss
@@ -221,15 +209,12 @@ def example_train(
     train: DictConfig,
 ):
     print("[*] Setting Randomness...")
-    torch.random.manual_seed(seed)  # For dataloader order
     key = jax.random.PRNGKey(seed)
     key, rng, train_rng = jax.random.split(key, num=3)
 
     # Create dataset
     create_dataset_fn = Datasets[dataset]
-    trainloader, testloader, n_classes, l_max, d_input = create_dataset_fn(
-        bsz=train.bsz
-    )
+    trainloader, testloader, n_classes, l_max, d_input = create_dataset_fn(bsz=2)
 
     # Get model class and arguments
     layer_cls = S4Layer
@@ -242,10 +227,9 @@ def example_train(
 
     model_cls = partial(S4WorldModel, S4_config=model, **wm)
 
-    state = create_train_state(
+    state, model = create_train_state(
         rng,
         model_cls,
-        trainloader,
         lr=train.lr,
         lr_layer=lr_layer,
         lr_schedule=train.lr_schedule,
@@ -258,16 +242,16 @@ def example_train(
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
 
+        print(f"[*] Running Epoch {epoch + 1} Validation...")
+
         state, train_loss = train_epoch(
             state,
             train_rng,
-            model_cls,
+            model,
             trainloader,
-            classification=False,
         )
 
-        print(f"[*] Running Epoch {epoch + 1} Validation...")
-        test_loss = validate(state.params, model_cls, testloader, classification=False)
+        test_loss = validate(state.params, model, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
@@ -277,8 +261,8 @@ def example_train(
             best_loss, best_epoch = test_loss, epoch
 
             suf = f"-{train.suffix}" if train.suffix is not None else ""
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}{suf}"
-            ckpt_path = checkpoints.save_checkpoint(
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={256}-lr={train.lr}-bsz={train.bsz}{suf}"
+            _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
@@ -302,8 +286,9 @@ def example_train(
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".9"
-    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
 
     print(OmegaConf.to_yaml(cfg))
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
