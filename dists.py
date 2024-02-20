@@ -8,5 +8,5 @@ tfd = tfp.distributions
 if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
     logits = jax.random.normal(key, (8, 10, 270 * 480))
-    dists = tfd.Independent(tfd.Normal(logits, 1), 1)
-    print(dists[:, :-1])
+    dists = tfd.Independent(tfd.OneHotCategorical(logits), 1)
+    print(dists.reparameterization_type)

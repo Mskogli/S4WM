@@ -15,6 +15,90 @@ from .s4_ssm import (
 )
 
 
+class StackedPSSMBlocks(nn.Module):
+    layer_cls: nn.Module
+    layer: dict  # Extra arguments to pass into layer constructor
+    d_output: int
+    d_model: int
+    n_layers: int
+    prenorm: bool = True
+    dropout: float = 0.1
+    training: bool = True
+    embedding: bool = False
+    rnn_mode: bool = False
+
+    def setup(self) -> None:
+        self.blocks = [
+            StackedModel(
+                layer_cls=self.layer_cls,
+                layer=self.layer,
+                d_model=self.d_model,
+                d_output=self.d_output,
+                n_layers=self.n_layers,
+                prenorm=self.prenorm,
+                dropout=self.dropout,
+                training=self.training,
+                embedding=self.embedding,
+                rnn_mode=self.rnn_mode,
+            )
+            for _ in range(6)
+        ]
+
+    def __call__(self, x: jnp.ndarray) -> None:
+        for block in self.blocks:
+            x = block(x)
+        return x
+
+
+class StackedModel(nn.Module):
+    layer_cls: nn.Module
+    layer: dict  # Extra arguments to pass into layer constructor
+    d_output: int
+    d_model: int
+    n_layers: int
+    prenorm: bool = True
+    dropout: float = 0.0
+    training: bool = True
+    embedding: bool = False
+    rnn_mode: bool = False
+
+    def setup(self) -> None:
+        self.norm = nn.LayerNorm()
+        self.drop = nn.Dropout(
+            self.dropout, broadcast_dims=[0], deterministic=not self.training
+        )
+        self.dense_1 = nn.Dense(features=2 * self.d_model)
+        self.dense_2 = nn.Dense(features=self.d_model)
+
+        self.layers = [
+            SequenceBlock(
+                layer_cls=self.layer_cls,
+                layer=self.layer,
+                prenorm=self.prenorm,
+                d_model=self.d_model,
+                dropout=self.dropout,
+                training=self.training,
+                rnn_mode=self.rnn_mode,
+            )
+            for _ in range(self.n_layers)
+        ]
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+
+        for layer in self.layers:
+            x = layer(x)
+        skip = x
+        x = self.norm(x)
+        x = self.dense_1(x)
+        x = nn.gelu(x)
+        x = self.drop(x)
+        x = self.dense_2(x)
+        x = self.drop(x)
+        x = x + skip
+
+        return x
+
+
 class SequenceBlock(nn.Module):
     layer_cls: nn.Module
     layer: dict  # Hyperparameters of inner layer
@@ -50,39 +134,6 @@ class SequenceBlock(nn.Module):
         x = skip + self.drop(x)
         if not self.prenorm:
             x = self.norm(x)
-        return x
-
-
-class StackedModel(nn.Module):
-    layer_cls: nn.Module
-    layer: dict  # Extra arguments to pass into layer constructor
-    d_output: int
-    d_model: int
-    n_layers: int
-    prenorm: bool = True
-    dropout: float = 0.0
-    training: bool = True
-    embedding: bool = False
-    rnn_mode: bool = False
-
-    def setup(self) -> None:
-        self.layers = [
-            SequenceBlock(
-                layer_cls=self.layer_cls,
-                layer=self.layer,
-                prenorm=self.prenorm,
-                d_model=self.d_model,
-                dropout=self.dropout,
-                training=self.training,
-                rnn_mode=self.rnn_mode,
-            )
-            for _ in range(self.n_layers)
-        ]
-
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        for layer in self.layers:
-            x = layer(x)
-        x = nn.gelu(x)
         return x
 
 
@@ -179,7 +230,7 @@ def cloneLayer(layer):
 S4Layer = cloneLayer(S4Layer)
 
 S4Block = nn.vmap(
-    partial(StackedModel, layer_cls=S4Layer, rnn_mode=False),
+    partial(StackedPSSMBlocks, layer_cls=S4Layer, rnn_mode=False),
     in_axes=0,
     out_axes=0,
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},

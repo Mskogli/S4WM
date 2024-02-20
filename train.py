@@ -45,8 +45,8 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth = jax.random.normal(init_rng, (2, 20, 1, 270, 480))
-    init_actions = jax.random.normal(init_rng, (2, 20, 4))
+    init_depth = jax.random.normal(init_rng, (4, 20, 1, 270, 480))
+    init_actions = jax.random.normal(init_rng, (4, 20, 4))
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -98,13 +98,11 @@ def create_train_state(
     print(f"[*] Trainable Parameters: {sum(jax.tree_leaves(param_sizes))}")
     print(f"[*] Total training steps: {total_steps}")
 
-    return (
-        train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx),
-        model,
-    )
+    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
-def train_epoch(state, rng, model, trainloader):
+def train_epoch(state, rng, model_cls, trainloader):
+    model = model_cls(training=True)
     batch_losses = []
 
     for batch_depth, batch_actions in tqdm(trainloader):
@@ -129,8 +127,9 @@ def train_epoch(state, rng, model, trainloader):
     )
 
 
-def validate(params, model, testloader):
+def validate(params, model_cls, testloader):
     losses = []
+    model = model_cls(training=False)
 
     for batch_depth, batch_actions in tqdm(testloader):
         batch_depth_labels = batch_depth[:, 1:, ...].reshape(
@@ -154,26 +153,22 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
 
     def loss_fn(params):
 
-        ret = model.apply(
+        z_posterior, z_prior, img_prior = model.apply(
             {"params": params},
             batch_depth,  # Depth images
             batch_actions,  # Actions
             rngs={"dropout": rng},
             mutable=["intermediates"],
-        )
-
-        z_prior, z_posterior, img_prior = ret[0]
+        )[0]
 
         loss = model.compute_loss(
-            img_prior_dist=img_prior[-1],
+            img_prior_dist=img_prior,
             img_posterior=batch_depth_labels,
-            z_posterior_dist=z_posterior[-1][:, 1:],
-            z_prior_dist=z_prior[-1],
+            z_posterior_dist=z_posterior[:, 1:],
+            z_prior_dist=z_prior,
         )
 
-        loss = np.mean(loss)
-
-        return loss
+        return np.mean(loss)
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=False)
     loss, grads = grad_fn(state.params)
@@ -182,17 +177,18 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
     return state, loss
 
 
+@partial(jax.jit, static_argnums=4)
 def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
-    z_prior, z_posterior, img_prior = model.apply(
+    z_posterior, z_prior, img_prior = model.apply(
         {"params": params}, batch_depth, batch_actions
     )
 
     loss = model.compute_loss(
-        img_prior_dist=img_prior[-1],
+        img_prior_dist=img_prior,
         img_posterior=batch_depth_labels,
-        z_posterior_dist=z_posterior[-1][:, 1:],
-        z_prior_dist=z_prior[-1],
+        z_posterior_dist=z_posterior[:, 1:],
+        z_prior_dist=z_prior,
     )
 
     loss = np.mean(loss)
@@ -214,7 +210,7 @@ def example_train(
 
     # Create dataset
     create_dataset_fn = Datasets[dataset]
-    trainloader, testloader, n_classes, l_max, d_input = create_dataset_fn(bsz=2)
+    trainloader, testloader, n_classes, l_max, d_input = create_dataset_fn(bsz=4)
 
     # Get model class and arguments
     layer_cls = S4Layer
@@ -227,7 +223,7 @@ def example_train(
 
     model_cls = partial(S4WorldModel, S4_config=model, **wm)
 
-    state, model = create_train_state(
+    state = create_train_state(
         rng,
         model_cls,
         lr=train.lr,
@@ -247,11 +243,11 @@ def example_train(
         state, train_loss = train_epoch(
             state,
             train_rng,
-            model,
+            model_cls,
             trainloader,
         )
 
-        test_loss = validate(state.params, model, testloader)
+        test_loss = validate(state.params, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")

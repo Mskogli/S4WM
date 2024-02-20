@@ -17,6 +17,7 @@ def log_step_initializer(dt_min: float = 0.001, dt_max: float = 0.1) -> Callable
 def scan_SSM(
     Ab: jnp.ndarray, Bb: jnp.ndarray, Cb: jnp.ndarray, u: jnp.ndarray, x0: jnp.ndarray
 ) -> jnp.ndarray:
+
     def step(x_k_1, u_k):
         x_k = Ab @ x_k_1 + Bb @ u_k
         y_k = Cb @ x_k
@@ -25,9 +26,8 @@ def scan_SSM(
     return jax.lax.scan(step, x0, u)
 
 
-def causal_convolution(
-    u: jnp.ndarray, K: jnp.ndarray, nofft: bool = False
-) -> jnp.ndarray:
+def causal_convolution(u: jnp.ndarray, K: jnp.ndarray) -> jnp.ndarray:
+    assert K.shape[0] == u.shape[0]
     ud = jnp.fft.rfft(jnp.pad(u, (0, K.shape[0])))
     Kd = jnp.fft.rfft(jnp.pad(K, (0, u.shape[0])))
     out = ud * Kd

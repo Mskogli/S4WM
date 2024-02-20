@@ -13,7 +13,9 @@ from flax.training import checkpoints
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
 
     model = S4WorldModel(S4_config=cfg.model, training=True, **cfg.wm)
@@ -21,7 +23,7 @@ def main(cfg: DictConfig) -> None:
     test_depth_imgs, test_actions = next(iter(trainloader))
 
     ckpt_state = checkpoints.restore_checkpoint(
-        f"/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=128-lr=0.001-bsz=256/checkpoint_29/checkpoint",
+        f"/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.0001-bsz=100/checkpoint_2",
         target=None,
     )
 
@@ -37,12 +39,12 @@ def main(cfg: DictConfig) -> None:
         {"params": params}, jnp.expand_dims(test_depth_imgs, axis=-3), test_actions
     )
 
-    pred_depth_images = preds[2][0]
+    pred_depth_images = preds[2].mean()
+    print(pred_depth_images)
 
-    example = pred_depth_images[1, 140, :].reshape(270, 480)
+    example = pred_depth_images[1, 19, :].reshape(270, 480)
     plt.imshow(example)
     plt.imsave("pred.png", example)
-    print("Preds ", preds[2][0].shape)
 
 
 if __name__ == "__main__":
