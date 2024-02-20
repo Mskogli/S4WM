@@ -1,5 +1,4 @@
 import torch
-import ujson
 import h5py
 import numpy as np
 

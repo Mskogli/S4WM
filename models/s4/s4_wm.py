@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
