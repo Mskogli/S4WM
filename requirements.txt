@@ -1,0 +1,7 @@
+hydra-core
+tqdm
+tensorflow-probability
+wandb
+omegaconf
+flax
+h5py

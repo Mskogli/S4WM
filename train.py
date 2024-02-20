@@ -281,10 +281,9 @@ def example_train(
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
-    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+
 
     print(OmegaConf.to_yaml(cfg))
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
