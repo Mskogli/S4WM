@@ -1,37 +1,51 @@
 import jax
+import hydra
+import os
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
+from omegaconf import DictConfig, OmegaConf
 from models.s4.s4_wm import S4WorldModel
+from utils.datasets import create_quad_depth_trajectories_datasets
+from flax.training import checkpoints
+
+
+@hydra.main(version_base=None, config_path=".", config_name="config")
+def main(cfg: DictConfig) -> None:
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    # os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.95"
+    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+    OmegaConf.set_struct(cfg, False)  # Allow writing keys
+
+    model = S4WorldModel(S4_config=cfg.model, training=True, **cfg.wm)
+    trainloader, testloader, _, _, _ = create_quad_depth_trajectories_datasets(bsz=2)
+    test_depth_imgs, test_actions = next(iter(trainloader))
+
+    ckpt_state = checkpoints.restore_checkpoint(
+        f"/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.0001-bsz=100/checkpoint_2",
+        target=None,
+    )
+
+    init_rng, dropout_rng = jax.random.split(jax.random.PRNGKey(1), num=2)
+    _ = model.init(
+        {"params": init_rng, "dropout": dropout_rng},
+        jnp.expand_dims(test_depth_imgs, axis=-3),
+        test_actions,
+    )
+
+    params = ckpt_state["params"]
+    preds = model.apply(
+        {"params": params}, jnp.expand_dims(test_depth_imgs, axis=-3), test_actions
+    )
+
+    pred_depth_images = preds[2].mean()
+    print(pred_depth_images)
+
+    example = pred_depth_images[1, 19, :].reshape(270, 480)
+    plt.imshow(example)
+    plt.imsave("pred.png", example)
 
 
 if __name__ == "__main__":
-    batch_size, seq_length = 2, 5
-
-    # Setup
-    key = jax.random.PRNGKey(0)
-    dummy_input_img = jax.random.normal(key, (batch_size, seq_length, 1, 270, 480))
-    dummy_input_actions = jax.random.normal(key, (batch_size, seq_length, 4))
-
-    world_model = S4WorldModel(discrete_latent_state=False, latent_dim=128)
-    params = world_model.init(
-        jax.random.PRNGKey(1), dummy_input_img, dummy_input_actions
-    )
-    params = params["params"]
-
-    print("Model initialized")
-
-    z_prior, z_posterior, img_prior = world_model.apply(
-        {"params": params}, dummy_input_img, dummy_input_actions
-    )
-
-    img_posts = jnp.squeeze(dummy_input_img[:, 1:], axis=-3)
-    img_posts = img_posts.reshape((batch_size, seq_length - 1, -1))
-
-    loss = world_model.compute_loss(
-        img_prior_dist=img_prior[-1],
-        img_posterior=img_posts,
-        z_posterior_dist=z_posterior[-1],
-        z_prior_dist=z_prior[-1],
-    )
-    print("Loss: ", loss.shape)
-    print(loss)
+    main()

@@ -12,8 +12,16 @@ sg = lambda x: tree_map(
 
 class OneHotDist(tfd.OneHotCategorical):
 
-    def __init__(self, logits=None, probs=None, dtype=jnp.float32):
-        super().__init__(logits, probs, dtype)
+    def __init__(
+        self,
+        logits=None,
+        probs=None,
+        dtype=jnp.float32,
+        validate_args=False,
+        allow_nan_stats=True,
+        name="OneHotCategorical",
+    ):
+        super().__init__(logits, probs, dtype, validate_args, allow_nan_stats, name)
 
     @classmethod
     def _parameter_properties(cls, dtype, num_classes=None):

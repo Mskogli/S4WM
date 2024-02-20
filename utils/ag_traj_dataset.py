@@ -1,6 +1,5 @@
 import torch
 import h5py
-import numpy as np
 
 from torch.utils.data import Dataset, random_split
 
@@ -54,11 +53,11 @@ class AerialGymTrajDataset(Dataset):
 
         traj_grp = self.file[f"trajectory_{idx}"]
         for idx, (_, img_data) in enumerate(traj_grp.items()):
-            if idx < 31:
+            if idx < 20:
                 depth_images.append(torch.from_numpy(img_data[:]).view(1, 270, 480))
                 actions.append(torch.from_numpy(img_data.attrs["actions"]).view(1, 4))
 
-        imgs = torch.cat(depth_images, dim=0)
+        imgs = torch.cat(depth_images, dim=0).unsqueeze(dim=-3)
         acts = torch.cat(actions, dim=0)
 
         return imgs, acts
