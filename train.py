@@ -45,8 +45,8 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth = jax.random.normal(init_rng, (4, 20, 1, 270, 480))
-    init_actions = jax.random.normal(init_rng, (4, 20, 4))
+    init_depth = jax.random.normal(init_rng, (1, 45, 1, 270, 480))
+    init_actions = jax.random.normal(init_rng, (1, 45, 4))
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -282,8 +282,8 @@ def example_train(
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = '2'
-
+    os.environ['CUDA_VISIBLE_DEVICES'] = '2, 1'
+    os.environ["XLA_FLAGS"]="--xla_gpu_strict_conv_algorithm_picker=false"
 
     print(OmegaConf.to_yaml(cfg))
     OmegaConf.set_struct(cfg, False)  # Allow writing keys

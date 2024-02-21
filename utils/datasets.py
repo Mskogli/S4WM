@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 from jax.tree_util import tree_map
 from torch.utils import data
@@ -41,10 +40,10 @@ class NumpyLoader(data.DataLoader):
 def create_quad_depth_trajectories_datasets(bsz=128):
     print("[*] Generating Aerial Gym Trajectory Dataset")
 
-    N_CLASSES, SEQ_LENGTH, IN_DIM = 128, 19, 132
+    N_CLASSES, SEQ_LENGTH, IN_DIM = 128, 44, 132
 
     dataset = AerialGymTrajDataset(
-        "/home/mathias/dev/aerial_gym_simulator/aerial_gym/rl_training/rl_games/quad_depth_imgs",
+        "/home/mathias/dev/quad_depth_imgs",
         "cpu",
         actions=True,
     )

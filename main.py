@@ -18,12 +18,12 @@ def main(cfg: DictConfig) -> None:
     os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
 
-    model = S4WorldModel(S4_config=cfg.model, training=True, **cfg.wm)
+    model = S4WorldModel(S4_config=cfg.model, training=False, **cfg.wm)
     trainloader, testloader, _, _, _ = create_quad_depth_trajectories_datasets(bsz=2)
     test_depth_imgs, test_actions = next(iter(trainloader))
 
     ckpt_state = checkpoints.restore_checkpoint(
-        f"/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.0001-bsz=100/checkpoint_2",
+        f"/home/mathias/dev/structured-state-space-wm/checkpoints/quad_depth_trajectories/s4-d_model=256-lr=0.001-bsz=100/checkpoint_9",
         target=None,
     )
 
@@ -40,11 +40,11 @@ def main(cfg: DictConfig) -> None:
     )
 
     pred_depth_images = preds[2].mean()
-    print(pred_depth_images)
 
-    example = pred_depth_images[1, 19, :].reshape(270, 480)
-    plt.imshow(example)
-    plt.imsave("pred.png", example)
+    for i in range(20):    
+        example = pred_depth_images[1, i, :].reshape(270, 480)
+        plt.imshow(example)
+        plt.imsave(f"pred_{i}.png", example)
 
 
 if __name__ == "__main__":

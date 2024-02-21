@@ -63,7 +63,7 @@ class S4WorldModel(nn.Module):
             "hidden": hidden_to_stats_head,
         }
 
-        self.input_head = nn.Dense(features=512)
+        self.input_head = nn.Dense(features=1024)
 
     def get_latent_posteriors_from_images(
         self, image: jnp.ndarray
@@ -99,6 +99,7 @@ class S4WorldModel(nn.Module):
         self, hidden: jnp.ndarray, z_posterior: jnp.ndarray
     ) -> tfd.Distribution:
         x = self.decoder(jnp.concatenate((hidden, z_posterior), axis=-1))
+        print("decoded image:",  x)   
         img_prior_dists = self.get_distribution_from_statistics(
             statistics=x, image=True
         )
@@ -123,9 +124,8 @@ class S4WorldModel(nn.Module):
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         reconstruction_loss = (
-            -img_prior_dist.log_prob(img_posterior.astype(f32)) / 10000
+            -img_prior_dist.log_prob(img_posterior.astype(f32)) / (507)
         )
-
         return jnp.sum(
             self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss, axis=-1
         )
@@ -141,7 +141,7 @@ class S4WorldModel(nn.Module):
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
             ).astype(f32)
-            return tfd.Independent(tfd.Normal(mean, 1), 1)
+            return tfd.MultivariateNormalDiag(mean, jnp.ones_like(mean))
         elif discrete:
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
         else:
@@ -194,7 +194,7 @@ class S4WorldModel(nn.Module):
         z_prior_dists = self.get_latent_prior_from_hidden(hidden)
 
         # Compute the image priors trough the hidden states and the latent posteriors
-        img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
+        img_prior_dists  = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
 
         return z_posterior_dists, z_prior_dists, img_prior_dists
 

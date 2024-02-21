@@ -182,4 +182,4 @@ if __name__ == "__main__":
     random_latent_batch = random.normal(key, (2, 10, 128))
     params = decoder.init(key, random_latent_batch)["params"]
     output = decoder.apply({"params": params}, random_latent_batch)
-    print("output", output.shape)
+    print("output", output)

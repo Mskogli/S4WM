@@ -18,7 +18,6 @@ from .s4_ssm import (
 class StackedPSSMBlocks(nn.Module):
     layer_cls: nn.Module
     layer: dict  # Extra arguments to pass into layer constructor
-    d_output: int
     d_model: int
     n_layers: int
     prenorm: bool = True
@@ -33,7 +32,6 @@ class StackedPSSMBlocks(nn.Module):
                 layer_cls=self.layer_cls,
                 layer=self.layer,
                 d_model=self.d_model,
-                d_output=self.d_output,
                 n_layers=self.n_layers,
                 prenorm=self.prenorm,
                 dropout=self.dropout,
@@ -53,7 +51,6 @@ class StackedPSSMBlocks(nn.Module):
 class StackedModel(nn.Module):
     layer_cls: nn.Module
     layer: dict  # Extra arguments to pass into layer constructor
-    d_output: int
     d_model: int
     n_layers: int
     prenorm: bool = True

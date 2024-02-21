@@ -53,7 +53,7 @@ class AerialGymTrajDataset(Dataset):
 
         traj_grp = self.file[f"trajectory_{idx}"]
         for idx, (_, img_data) in enumerate(traj_grp.items()):
-            if idx < 20:
+            if idx < 45:
                 depth_images.append(torch.from_numpy(img_data[:]).view(1, 270, 480))
                 actions.append(torch.from_numpy(img_data.attrs["actions"]).view(1, 4))
 

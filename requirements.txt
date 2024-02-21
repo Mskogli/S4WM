@@ -5,3 +5,4 @@ wandb
 omegaconf
 flax
 h5py
+matplotlib

@@ -3,7 +3,7 @@ layer: s4
 seed: 0
 
 wm:
-  latent_dim: 256
+  latent_dim: 1024
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
@@ -11,19 +11,18 @@ wm:
   discrete_latent_state: False
 
 model:
-  d_model: 512
-  d_output: 256
+  d_model: 1024
   n_layers: 2
   dropout: 0.0
   layer:
-    l_max: 19
+    l_max: 44
     N: 128
 
 train:
-  epochs: 10
+  epochs: 100
   bsz: 100
-  lr: 0.0001
-  lr_schedule: false
+  lr: 0.001
+  lr_schedule: true
   weight_decay: 0.05
   checkpoint: true
   suffix: null # String to use for checkpoint suffix
