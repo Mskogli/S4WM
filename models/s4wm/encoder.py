@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 
 from jax import random
@@ -49,7 +48,14 @@ class ImageEncoder(nn.Module):
             bias_init=zeros,
         )
 
-        self.conv_20 = nn.Conv(64, kernel_size=(5, 5), strides=2, padding=(2, 2))
+        self.conv_20 = nn.Conv(
+            64,
+            kernel_size=(5, 5),
+            strides=2,
+            padding=(2, 2),
+            kernel_init=glorot_init,
+            bias_init=zeros,
+        )
         self.conv_21 = nn.Conv(
             128,
             kernel_size=(128),
@@ -58,13 +64,31 @@ class ImageEncoder(nn.Module):
             bias_init=zeros,
         )
 
-        self.conv_30 = nn.Conv(128, kernel_size=(5, 5), strides=2)
+        self.conv_30 = nn.Conv(
+            128, kernel_size=(5, 5), strides=2, kernel_init=glorot_init, bias_init=zeros
+        )
 
-        self.conv_skip_0 = nn.Conv(64, kernel_size=(4, 4), strides=2, padding=(3, 3))
-        self.conv_skip_1 = nn.Conv(128, kernel_size=(5, 5), strides=4, padding=(2, 2))
+        self.conv_skip_0 = nn.Conv(
+            64,
+            kernel_size=(4, 4),
+            strides=2,
+            padding=(3, 2),
+            kernel_init=glorot_init,
+            bias_init=zeros,
+        )
+        self.conv_skip_1 = nn.Conv(
+            128,
+            kernel_size=(5, 5),
+            strides=(2, 4),
+            padding=(2, 3),
+            kernel_init=glorot_init,
+            bias_init=zeros,
+        )
 
-        self.dense_40 = nn.Dense(features=512)
-        self.dense_41 = nn.Dense(features=self.latent_dim)
+        self.dense_40 = nn.Dense(features=512, kernel_init=glorot_init, bias_init=zeros)
+        self.dense_41 = nn.Dense(
+            features=self.latent_dim, kernel_init=glorot_init, bias_init=zeros
+        )
 
     def _downsample(self, img: jnp.ndarray) -> jnp.ndarray:
         # First stage
@@ -102,84 +126,19 @@ class ImageEncoder(nn.Module):
         return x_41
 
     def __call__(self, imgs: jnp.ndarray) -> jnp.ndarray:
-        return self._downsample(imgs)
+        # Running the forward pass in chunks requires less contiguous memory
+        chunks = jnp.array_split(imgs, 4, axis=1)
+        downsampled_chunks = [self._downsample(chunk) for chunk in chunks]
 
-
-class ImageDecoder(nn.Module):
-    latent_dim: int
-    act: str = "elu"
-
-    def setup(self) -> None:
-
-        if self.act == "elu":
-            self.act_fn = nn.elu
-        elif self.act == "gelu":
-            self.act_fn = nn.gelu
-        elif self.act == "silu":
-            self.act_fn = nn.silu
-        else:
-            self.act_fn = lambda x: x
-
-        self.dense_00 = nn.Dense(features=512)
-        self.dense_01 = nn.Dense(features=9 * 15 * 128)
-
-        self.deconv_1 = nn.ConvTranspose(
-            128, kernel_size=(3, 3), strides=(1, 1), padding="SAME"
-        )
-        self.deconv_2 = nn.ConvTranspose(
-            64, kernel_size=(5, 5), strides=(2, 2), padding="SAME"
-        )
-        self.deconv_3 = nn.ConvTranspose(
-            32, kernel_size=(6, 6), strides=(5, 4), padding="SAME"
-        )
-        self.deconv_4 = nn.ConvTranspose(
-            16, kernel_size=(4, 4), strides=(3, 4), padding="SAME"
-        )
-        self.deconv_5 = nn.ConvTranspose(
-            1, kernel_size=(4, 4), strides=(1, 1), padding="SAME"
-        )
-
-    def _upsample(self, latent: jnp.ndarray) -> jnp.ndarray:
-        x = self.dense_00(latent)
-        x = nn.relu(x)
-        x = self.dense_01(x)
-        x = x.reshape(x.shape[0], x.shape[1], 9, 15, 128)
-
-        x = self.deconv_1(x)
-        x = nn.relu(x)
-
-        x = self.deconv_2(x)
-        x = nn.relu(x)
-
-        x = self.deconv_3(x)
-        x = nn.relu(x)
-
-        x = self.deconv_4(x)
-        x = nn.relu(x)
-
-        x = self.deconv_5(x)
-        x = nn.tanh(x)
-
-        return jnp.squeeze(x, axis=-1)
-
-    def __call__(self, latents: jnp.ndarray) -> jnp.ndarray:
-        return self._upsample(latents)
+        return jnp.concatenate(downsampled_chunks, axis=1)
 
 
 if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
-    encoder = ImageEncoder(latent_dim=128, act="silu")
-    random_img_batch = random.normal(key, (2, 150, 1, 270, 480))
+    encoder = ImageEncoder(latent_dim=256)
+    random_img_batch = random.normal(key, (2, 10, 270, 480, 1))
 
     params = encoder.init(key, random_img_batch)["params"]
     output = encoder.apply({"params": params}, random_img_batch)
-    print("Image decoder output shape: ", output.shape)
-
-    del encoder, params, output
-
-    decoder = ImageDecoder(latent_dim=128)
-    random_latent_batch = random.normal(key, (2, 10, 128))
-    params = decoder.init(key, random_latent_batch)["params"]
-    output = decoder.apply({"params": params}, random_latent_batch)
-    print("output", output)
+    print("Output shape: ", output.shape)

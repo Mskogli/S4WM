@@ -27,7 +27,6 @@ def scan_SSM(
 
 
 def causal_convolution(u: jnp.ndarray, K: jnp.ndarray) -> jnp.ndarray:
-    assert K.shape[0] == u.shape[0]
     ud = jnp.fft.rfft(jnp.pad(u, (0, K.shape[0])))
     Kd = jnp.fft.rfft(jnp.pad(K, (0, u.shape[0])))
     out = ud * Kd

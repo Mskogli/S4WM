@@ -9,8 +9,8 @@ from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from models.s4 import S4WorldModel, S4Layer
-from utils.datasets import Datasets
+from models.s4wm import S4WorldModel, S4Layer
+from data.dataloaders import Dataloaders
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
@@ -45,7 +45,7 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth = jax.random.normal(init_rng, (1, 45, 1, 270, 480))
+    init_depth = jax.random.normal(init_rng, (1, 45, 270, 480, 1))
     init_actions = jax.random.normal(init_rng, (1, 45, 4))
 
     params = model.init(
@@ -110,6 +110,8 @@ def train_epoch(state, rng, model_cls, trainloader):
         batch_depth_labels = batch_depth[:, 1:, ...].reshape(
             batch_depth.shape[0], batch_depth.shape[1] - 1, -1
         )
+        batch_depth = np.expand_dims(batch_depth, axis=-1)
+
         state, loss = train_step(
             state,
             drop_rng,
@@ -119,7 +121,6 @@ def train_epoch(state, rng, model_cls, trainloader):
             model,
         )
         batch_losses.append(loss)
-        print("Loss: ", loss)
 
     return (
         state,
@@ -135,6 +136,7 @@ def validate(params, model_cls, testloader):
         batch_depth_labels = batch_depth[:, 1:, ...].reshape(
             batch_depth.shape[0], batch_depth.shape[1] - 1, -1
         )
+        batch_depth = np.expand_dims(batch_depth, axis=-1)
 
         loss = eval_step(
             batch_depth,
@@ -196,7 +198,7 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
     return loss
 
 
-def example_train(
+def train(
     dataset: str,
     layer: str,
     seed: int,
@@ -205,21 +207,21 @@ def example_train(
     train: DictConfig,
 ):
     print("[*] Setting Randomness...")
+
     key = jax.random.PRNGKey(seed)
     key, rng, train_rng = jax.random.split(key, num=3)
 
-    # Create dataset
-    create_dataset_fn = Datasets[dataset]
-    trainloader, testloader, n_classes, l_max, d_input = create_dataset_fn(bsz=4)
+    # Create dataset and data loaders
+    create_dataloaders_fn = Dataloaders[dataset]
+    trainloader, testloader = create_dataloaders_fn(batch_size=train.bsz)
 
     # Get model class and arguments
     layer_cls = S4Layer
-    model.layer.l_max = l_max
-
-    # Extract custom hyperparameters from model class
     lr_layer = getattr(layer_cls, "lr", None)
 
-    print(f"[*] Starting `{layer}` Training on `{dataset}` =>> Initializing...")
+    print(
+        f"[*] Starting S4 World Model Training On Dataset: {dataset} =>> Initializing..."
+    )
 
     model_cls = partial(S4WorldModel, S4_config=model, **wm)
 
@@ -234,11 +236,9 @@ def example_train(
     )
 
     # Loop over epochs
-    best_loss, best_epoch = 10000000, 0
+    best_loss, best_epoch = np.inf, 0
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
-
-        print(f"[*] Running Epoch {epoch + 1} Validation...")
 
         state, train_loss = train_epoch(
             state,
@@ -247,17 +247,18 @@ def example_train(
             trainloader,
         )
 
-        test_loss = validate(state.params, model_cls, testloader)
+        print(f"[*] Running Epoch {epoch + 1} Validation...")
+
+        val_loss = validate(state.params, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
-        print(f"\tVal Loss: {test_loss:.5f} -- Train Loss:")
+        print(f"\tVal Loss: {val_loss:.5f} -- Train Loss:")
 
-        if test_loss < best_loss:
-            best_loss, best_epoch = test_loss, epoch
+        if val_loss < best_loss:
+            best_loss, best_epoch = val_loss, epoch
 
-            suf = f"-{train.suffix}" if train.suffix is not None else ""
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/{layer}-d_model={256}-lr={train.lr}-bsz={train.bsz}{suf}"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
@@ -271,7 +272,7 @@ def example_train(
             wandb.log(
                 {
                     "train/loss": train_loss,
-                    "test/loss": test_loss,
+                    "val/loss": val_loss,
                 },
                 step=epoch,
             )
@@ -281,11 +282,12 @@ def example_train(
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-
-    os.environ['CUDA_VISIBLE_DEVICES'] = '2, 1'
-    os.environ["XLA_FLAGS"]="--xla_gpu_strict_conv_algorithm_picker=false"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 1"
+    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     print(OmegaConf.to_yaml(cfg))
+
     OmegaConf.set_struct(cfg, False)  # Allow writing keys
 
     # Track with wandb
@@ -293,7 +295,7 @@ def main(cfg: DictConfig) -> None:
         wandb_cfg = cfg.pop("wandb")
         wandb.init(**wandb_cfg, config=OmegaConf.to_container(cfg, resolve=True))
 
-    example_train(**cfg)
+    train(**cfg)
 
 
 if __name__ == "__main__":

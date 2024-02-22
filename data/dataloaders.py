@@ -1,7 +1,11 @@
 import numpy as np
+
 from jax.tree_util import tree_map
 from torch.utils import data
-from .ag_traj_dataset import AerialGymTrajDataset, split_dataset
+
+from .depth_img_dataset import DepthImageDataset, split_dataset
+
+from typing import Tuple
 
 
 def numpy_collate(batch):
@@ -21,7 +25,7 @@ class NumpyLoader(data.DataLoader):
         drop_last=False,
         timeout=0,
         worker_init_fn=None,
-    ):
+    ) -> None:
         super(self.__class__, self).__init__(
             dataset,
             batch_size=batch_size,
@@ -37,24 +41,24 @@ class NumpyLoader(data.DataLoader):
         )
 
 
-def create_quad_depth_trajectories_datasets(bsz=128):
-    print("[*] Generating Aerial Gym Trajectory Dataset")
+def create_depth_dataset(
+    batch_size: int = 128,
+) -> Tuple[NumpyLoader, ...]:  # 2 tuple
+    print("[*] Creating Dataset and Generating Dataloaders")
 
-    N_CLASSES, SEQ_LENGTH, IN_DIM = 128, 44, 132
-
-    dataset = AerialGymTrajDataset(
+    dataset = DepthImageDataset(
         "/home/mathias/dev/quad_depth_imgs",
         "cpu",
         actions=True,
     )
 
     train_dataset, val_dataset = split_dataset(dataset, 0.1)
-    trainloader = NumpyLoader(train_dataset, batch_size=bsz, shuffle=True)
-    valloader = NumpyLoader(val_dataset, batch_size=bsz, shuffle=True)
+    train_loader = NumpyLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = NumpyLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-    return trainloader, valloader, N_CLASSES, SEQ_LENGTH, IN_DIM
+    return train_loader, val_loader
 
 
-Datasets = {
-    "quad_depth_trajectories": create_quad_depth_trajectories_datasets,
+Dataloaders = {
+    "depth_dataset": create_depth_dataset,
 }

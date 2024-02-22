@@ -36,3 +36,30 @@ class OneHotDist(tfd.OneHotCategorical):
         while len(tensor.shape) < len(shape):
             tensor = tensor[None]
         return tensor
+
+
+class MSEDist:
+
+    def __init__(self, mode, dims, agg="sum"):
+        self._mode = mode
+        self._dims = tuple([-x for x in range(1, dims + 1)])
+        self._agg = agg
+        self.batch_shape = mode.shape[: len(mode.shape) - dims]
+        self.event_shape = mode.shape[len(mode.shape) - dims :]
+
+    def mode(self):
+        return self._mode
+
+    def mean(self):
+        return self._mode
+
+    def log_prob(self, value):
+        assert self._mode.shape == value.shape, (self._mode.shape, value.shape)
+        distance = (self._mode - value) ** 2
+        if self._agg == "mean":
+            loss = distance.mean(self._dims)
+        elif self._agg == "sum":
+            loss = distance.sum(self._dims)
+        else:
+            raise NotImplementedError(self._agg)
+        return -loss
