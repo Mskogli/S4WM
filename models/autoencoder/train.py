@@ -5,9 +5,9 @@ import flax.linen as nn
 
 from tqdm import tqdm
 from flax.training import checkpoints, train_state
-from nets import AutoEncoder
+from .nets import AutoEncoder
 from functools import partial
-from data import create_depth_dataset
+from data.dataloaders import create_depth_dataset
 
 import matplotlib.pyplot as plt
 
@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
     train = False
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
@@ -92,11 +92,11 @@ if __name__ == "__main__":
         print("batman")
         train_imgs, _ = next(iter(train_loader))
         ckpt_state = checkpoints.restore_checkpoint(
-            f"/home/mathias/dev/structured-state-space-wm/models/autoencoder/checkpoints/autoencoder/checkpoint_12",
+            f"/home/mathias/dev/structured-state-space-wm/models/autoencoder/checkpoints/autoencoder/checkpoint_21",
             target=None,
         )
         params = ckpt_state["params"]
         preds = model.apply({"params": params}, jnp.expand_dims(train_imgs, axis=-1))
         for i in range(30):
-            plt.imsave(f"imgs/preds_{i}.png", preds[0, i, :].reshape(270, 480))
+            plt.imsave(f"preds_{i}.png", preds[0, i, :].reshape(270, 480))
         print(preds)

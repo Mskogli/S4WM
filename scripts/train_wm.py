@@ -69,7 +69,8 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.adam(learning_rate=schedule_fn(v * lr)) for k, v in lr_layer.items()
+        k: optax.chain(optax.clip(5), optax.adam(learning_rate=schedule_fn(v * lr)))
+        for k, v in lr_layer.items()
     }
 
     optimizers["__default__"] = optax.adamw(
@@ -130,6 +131,7 @@ def train_epoch(state, rng, model_cls, trainloader):
 
 def validate(params, model_cls, testloader):
     losses = []
+    recons = []
     model = model_cls(training=False)
 
     for batch_depth, batch_actions in tqdm(testloader):
@@ -138,7 +140,7 @@ def validate(params, model_cls, testloader):
         )
         batch_depth = np.expand_dims(batch_depth, axis=-1)
 
-        loss = eval_step(
+        loss, recon = eval_step(
             batch_depth,
             batch_actions,
             batch_depth_labels,
@@ -146,8 +148,9 @@ def validate(params, model_cls, testloader):
             model,
         )
 
+        recons.append(recon)
         losses.append(loss)
-    return np.mean(np.array(losses))
+    return np.mean(np.array(losses)), recons
 
 
 @partial(jax.jit, static_argnums=5)
@@ -195,7 +198,7 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
     loss = np.mean(loss)
 
-    return loss
+    return loss, img_prior[:, 10, ...]
 
 
 def train(
@@ -249,7 +252,7 @@ def train(
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
-        val_loss = validate(state.params, model_cls, testloader)
+        val_loss, recons = validate(state.params, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
@@ -269,10 +272,17 @@ def train(
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
         if wandb is not None:
+            wandb_images = [
+                wandb.Image(
+                    img.reshape(270, 480, 1, caption=f"recon_sample_{i}")
+                    for i, img in enumerate(recons)
+                )
+            ]
             wandb.log(
                 {
                     "train/loss": train_loss,
                     "val/loss": val_loss,
+                    "depth_recons": wandb_images,
                 },
                 step=epoch,
             )

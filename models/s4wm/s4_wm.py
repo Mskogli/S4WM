@@ -121,21 +121,17 @@ class S4WorldModel(nn.Module):
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
-        dynamics_loss = (
-            sg(z_posterior_dist).kl_divergence(z_prior_dist) / self.latent_dim
-        )
+        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
         dynamics_loss = jnp.maximum(dynamics_loss, 0.1)
 
-        representation_loss = (
-            z_posterior_dist.kl_divergence(sg(z_prior_dist)) / self.latent_dim
-        )
+        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
         representation_loss = jnp.maximum(representation_loss, 0.1)
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
-        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1) / (270 * 480)
+        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
 
         return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
