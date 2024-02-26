@@ -122,6 +122,7 @@ def train_epoch(state, rng, model_cls, trainloader):
             model,
         )
         batch_losses.append(loss)
+        print("Batch loss: ", loss)
 
     return (
         state,
@@ -198,7 +199,7 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
     loss = np.mean(loss)
 
-    return loss, img_prior[:, 10, ...]
+    return loss, img_prior.mean()[:, 10, ...]
 
 
 def train(
@@ -272,17 +273,16 @@ def train(
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
         if wandb is not None:
-            wandb_images = [
-                wandb.Image(
-                    img.reshape(270, 480, 1, caption=f"recon_sample_{i}")
-                    for i, img in enumerate(recons)
-                )
-            ]
+            # wandb_images = [
+            #     wandb.Image(
+            #         img.reshape(270, 480, 1, caption=f"recon_sample_{i}")
+            #         for i, img in enumerate(recons)
+            #     )
+            # ]
             wandb.log(
                 {
                     "train/loss": train_loss,
                     "val/loss": val_loss,
-                    "depth_recons": wandb_images,
                 },
                 step=epoch,
             )

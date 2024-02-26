@@ -31,12 +31,19 @@ class S4WorldModel(nn.Module):
     latent_dim: int = 128
     hidden_dim: int = 512
     num_actions: int = 4
+
     alpha: float = 0.8
     beta_rec: float = 1.0
     beta_kl: float = 0.0
-    discrete_latent_state: bool = False
+
+    discrete_latent_state: bool = True
     training: bool = True
     seed: int = 42
+
+    S4_vars = {
+        "hidden": None,  # x_k-1
+        "matrcies": None,  # discrete time state space matrices
+    }
 
     def setup(self) -> None:
         self.num_classes = (
@@ -44,10 +51,17 @@ class S4WorldModel(nn.Module):
         )
         self.rng = jax.random.PRNGKey(self.seed)
 
-        self.encoder = ImageEncoder(latent_dim=2 * self.latent_dim)
-        self.decoder = ImageDecoder(latent_dim=self.latent_dim)
+        self.encoder = ImageEncoder(
+            latent_dim=(
+                self.latent_dim if self.discrete_latent_state else 2 * self.latent_dim
+            ),
+            act="silu",
+        )
+        self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
 
-        self.PSSM_blocks = S4Block(**self.S4_config, training=self.training)
+        self.PSSM_blocks = S4Block(
+            **self.S4_config, rnn_mode=True, training=self.training
+        )
 
         self.statistic_heads = {
             "embedding": nn.Dense(
@@ -122,16 +136,16 @@ class S4WorldModel(nn.Module):
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
-        dynamics_loss = jnp.maximum(dynamics_loss, 0.1)
+        dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
 
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
-        representation_loss = jnp.maximum(representation_loss, 0.1)
+        representation_loss = jnp.maximum(representation_loss, 1.0)
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
-        kl_loss = jnp.sum(kl_loss, axis=-1)
+        kl_loss = jnp.sum(kl_loss, axis=-1) / 100
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
-        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
+        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1) / 100
 
         return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
@@ -206,6 +220,132 @@ class S4WorldModel(nn.Module):
         img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
 
         return z_posterior_dists, z_prior_dists, img_prior_dists
+
+    def _init_RNN_mode(self, params, init_rng, init_depth, init_actions) -> None:
+        # Add assert to check that the model is in RNN mode
+        variables = self.init(
+            {"params": init_rng[0], "dropout": init_rng[1]}, init_depth, init_actions
+        )
+        vars = {
+            "params": params,
+            "cache": variables["cache"],
+            "prime": variables["prime"],
+        }
+        _, prime_vars = self.apply(vars, init_depth, init_actions, mutable=["prime"])
+
+        self.S4_vars = {"hidden": vars["cache"], "matrices": prime_vars["prime"]}
+        return
+
+    def _forward_RNN_mode(
+        self, params, imgs, actions
+    ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
+        preds, vars = self.apply(
+            {
+                "params": params,
+                "prime": self.S4_vars["matrices"],
+                "cache": self.S4_vars["hidden"],
+            },
+            imgs,
+            actions,
+            mutable=["cache"],
+        )
+        self.S4_vars["hidden"] = vars["cache"]
+
+        return preds
+
+    def _build_context(
+        self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
+    ) -> None:
+        context_posteriors, _ = self.get_latent_posteriors_from_images(context_imgs)
+        g = self.input_head(
+            jnp.concatenate((context_posteriors, context_actions), axis=-1)
+        )
+        context_hiddens = self.PSSM_blocks(g)
+        last_prior = self.get_latent_prior_from_hidden(context_hiddens[:, -1]).sample(
+            seed=self.rng
+        )
+        return last_prior, context_hiddens[:, -1]
+
+    def _open_loop_prediction(
+        self, prev_prior: jnp.ndarray, next_action: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
+        g = self.input_head(
+            jnp.concatenate(
+                (
+                    jnp.reshape(prev_prior, (-1, 1, self.latent_dim)),
+                    jnp.reshape(next_action, (-1, 1, self.num_actions)),
+                ),
+                axis=-1,
+            )
+        )
+        hidden = self.PSSM_blocks(g)
+        next_prior = self.get_latent_prior_from_hidden(hidden).sample(seed=self.rng)
+        return next_prior, hidden
+
+    def _decode_predictions(
+        self, hiddens: jnp.ndarray, priors: jnp.ndarray
+    ) -> jnp.ndarray:
+        hiddens = jnp.array(hiddens)
+        priors = jnp.array(priors)
+
+        hiddens = jnp.reshape(hiddens, (-1, len(hiddens), self.latent_dim))
+        priors = jnp.reshape(priors, (-1, len(priors), self.latent_dim))
+        img_post = self.get_image_prior_dists(hiddens, priors)
+        return img_post.mean()
+
+    def dream(
+        self,
+        params: dict,
+        context_imgs: jnp.ndarray,
+        context_actions: jnp.ndarray,
+        dream_actions: jnp.ndarray,
+        dream_length: int = 10,
+        viz: bool = False,
+    ) -> jnp.ndarray:
+        self._init_RNN_mode(
+            params,
+            (jax.random.PRNGKey(0), jax.random.PRNGKey(1)),
+            jnp.zeros_like(context_imgs),
+            jnp.zeros_like(context_actions),
+        )
+
+        # Feed the model environment context
+        (last_prior, last_hidden), vars = self.apply(
+            {
+                "params": params,
+                "prime": self.S4_vars["matrices"],
+                "cache": self.S4_vars["hidden"],
+            },
+            context_imgs,
+            context_actions,
+            mutable=["cache"],
+            method="_build_context",
+        )
+        self.S4_vars["hidden"] = vars["cache"]
+
+        priors = [jnp.expand_dims(last_prior, axis=1)]
+        hiddens = [jnp.expand_dims(last_hidden, axis=1)]
+
+        for i in range(dream_length):
+            (last_prior, last_hidden), vars = self.apply(
+                {
+                    "params": params,
+                    "prime": self.S4_vars["matrices"],
+                    "cache": self.S4_vars["hidden"],
+                },
+                last_prior,
+                dream_actions[:, i],
+                mutable=["cache"],
+                method="_open_loop_prediction",
+            )
+            self.S4_vars["hidden"] = vars["cache"]
+            priors.append(last_prior)
+            hiddens.append(last_hidden)
+
+        pred_imgs = self.apply(
+            {"params": params}, hiddens, priors, method="_decode_predictions"
+        )
+        return pred_imgs
 
 
 if __name__ == "__main__":

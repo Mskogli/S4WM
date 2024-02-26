@@ -25,11 +25,11 @@ class DepthImageDataset(Dataset):
         depth_images = []
         actions = []
 
-        traj_grp = self.file[f"trajectory_{idx}"]
-        for idx, (_, img_data) in enumerate(traj_grp.items()):
-            if idx < 100:
-                depth_images.append(torch.from_numpy(img_data[:]).view(1, 270, 480))
-                actions.append(torch.from_numpy(img_data.attrs["actions"]).view(1, 4))
+        for i in range(100):
+            dataset = self.file[f"trajectory_{idx}/image_{i}"]
+            img_data = dataset[:]
+            depth_images.append(torch.from_numpy(img_data).view(1, 270, 480))
+            actions.append(torch.from_numpy(dataset.attrs["actions"]).view(1, 4))
 
         imgs = torch.cat(depth_images, dim=0)
         acts = torch.cat(actions, dim=0)
