@@ -49,7 +49,7 @@ class ImageEncoder(nn.Module):
         )
 
         self.conv_20 = nn.Conv(
-            64,
+            features=64,
             kernel_size=(5, 5),
             strides=2,
             padding=(2, 2),
@@ -57,19 +57,23 @@ class ImageEncoder(nn.Module):
             bias_init=zeros,
         )
         self.conv_21 = nn.Conv(
-            128,
-            kernel_size=(128),
+            features=128,
+            kernel_size=(3, 3),
             strides=2,
             kernel_init=glorot_init,
             bias_init=zeros,
         )
 
         self.conv_30 = nn.Conv(
-            128, kernel_size=(5, 5), strides=2, kernel_init=glorot_init, bias_init=zeros
+            features=128,
+            kernel_size=(5, 5),
+            strides=2,
+            kernel_init=glorot_init,
+            bias_init=zeros,
         )
 
         self.conv_skip_0 = nn.Conv(
-            64,
+            features=64,
             kernel_size=(4, 4),
             strides=2,
             padding=(3, 2),
@@ -77,10 +81,10 @@ class ImageEncoder(nn.Module):
             bias_init=zeros,
         )
         self.conv_skip_1 = nn.Conv(
-            128,
+            features=128,
             kernel_size=(5, 5),
-            strides=(2, 4),
-            padding=(2, 3),
+            strides=(4, 4),
+            padding=(2, 2),
             kernel_init=glorot_init,
             bias_init=zeros,
         )

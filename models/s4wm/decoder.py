@@ -30,7 +30,7 @@ class ImageDecoder(nn.Module):
         )
 
         self.deconv_1 = nn.ConvTranspose(
-            128,
+            features=128,
             kernel_size=(3, 3),
             strides=(1, 1),
             padding="SAME",
@@ -38,7 +38,7 @@ class ImageDecoder(nn.Module):
             bias_init=zeros,
         )
         self.deconv_2 = nn.ConvTranspose(
-            64,
+            features=64,
             kernel_size=(5, 5),
             strides=(2, 2),
             padding="SAME",
@@ -46,7 +46,7 @@ class ImageDecoder(nn.Module):
             bias_init=zeros,
         )
         self.deconv_3 = nn.ConvTranspose(
-            32,
+            features=32,
             kernel_size=(6, 6),
             strides=(5, 4),
             padding="SAME",
@@ -54,7 +54,7 @@ class ImageDecoder(nn.Module):
             bias_init=zeros,
         )
         self.deconv_4 = nn.ConvTranspose(
-            16,
+            features=16,
             kernel_size=(4, 4),
             strides=(3, 4),
             padding="SAME",
@@ -62,7 +62,7 @@ class ImageDecoder(nn.Module):
             bias_init=zeros,
         )
         self.deconv_5 = nn.ConvTranspose(
-            1,
+            features=1,
             kernel_size=(4, 4),
             strides=(1, 1),
             padding="SAME",
