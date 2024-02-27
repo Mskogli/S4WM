@@ -89,7 +89,7 @@ class ImageDecoder(nn.Module):
         x = self.act_fn(x)
 
         x = self.deconv_5(x)
-        x = nn.tanh(x)
+        x = nn.sigmoid(x)
 
         return jnp.squeeze(x, axis=-1)
 

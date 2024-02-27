@@ -60,7 +60,7 @@ class S4WorldModel(nn.Module):
         self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
 
         self.PSSM_blocks = S4Block(
-            **self.S4_config, rnn_mode=True, training=self.training
+            **self.S4_config, rnn_mode=False, training=self.training
         )
 
         self.statistic_heads = {
@@ -142,11 +142,10 @@ class S4WorldModel(nn.Module):
         representation_loss = jnp.maximum(representation_loss, 1.0)
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
-        kl_loss = jnp.sum(kl_loss, axis=-1) / 100
+        kl_loss = jnp.sum(kl_loss, axis=-1)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
-        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1) / 100
-
+        reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
         return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
     def get_distribution_from_statistics(
@@ -164,7 +163,7 @@ class S4WorldModel(nn.Module):
         elif dist_type == "NormalDiag":
             mean = statistics["mean"].astype(f32)
             std = statistics["std"].astype(f32)
-            return tfd.Independent(tfd.Normal(mean, std), 1)
+            return tfd.MultivariateNormalDiag(mean, std)
         else:
             raise (NotImplementedError)
 
@@ -218,7 +217,6 @@ class S4WorldModel(nn.Module):
 
         # Compute the image priors trough the hidden states and the latent posteriors
         img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
-
         return z_posterior_dists, z_prior_dists, img_prior_dists
 
     def _init_RNN_mode(self, params, init_rng, init_depth, init_actions) -> None:

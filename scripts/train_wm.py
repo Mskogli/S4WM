@@ -45,8 +45,8 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth = jax.random.normal(init_rng, (1, 45, 270, 480, 1))
-    init_actions = jax.random.normal(init_rng, (1, 45, 4))
+    init_depth = jax.random.normal(init_rng, (1, 75, 270, 480, 1))
+    init_actions = jax.random.normal(init_rng, (1, 75, 4))
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -69,7 +69,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(5), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(1000), optax.adam(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 

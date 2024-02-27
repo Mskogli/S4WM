@@ -16,7 +16,9 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 980
+        self.num_trajs = 2000
+        self.max_depth_value = 30
+        self.min_depth_value = 0.1
 
     def __len__(self) -> int:
         return self.num_trajs
@@ -25,13 +27,20 @@ class DepthImageDataset(Dataset):
         depth_images = []
         actions = []
 
-        for i in range(100):
+        for i in range(75):
             dataset = self.file[f"trajectory_{idx}/image_{i}"]
             img_data = dataset[:]
             depth_images.append(torch.from_numpy(img_data).view(1, 270, 480))
             actions.append(torch.from_numpy(dataset.attrs["actions"]).view(1, 4))
 
         imgs = torch.cat(depth_images, dim=0)
+        imgs[torch.isinf(imgs)] = self.max_depth_value
+        imgs[imgs > self.max_depth_value] = self.max_depth_value
+        imgs[imgs < self.min_depth_value] = self.min_depth_value
+        imgs = (imgs - self.min_depth_value) / (
+            self.max_depth_value - self.min_depth_value
+        )
+
         acts = torch.cat(actions, dim=0)
 
         return imgs, acts
@@ -50,7 +59,7 @@ def split_dataset(
 if __name__ == "__main__":
 
     dataset = DepthImageDataset(
-        "/home/mathias/dev/quad_depth_imgs",
+        "/home/mathias/dev/quad_depth_imgs_2",
         "cpu",
         actions=True,
     )
@@ -62,5 +71,3 @@ if __name__ == "__main__":
 
     for idx, image in enumerate(train_batch[0], 1):
         print(idx)
-        plt.imshow(image.view(270, 480))
-        plt.show()
