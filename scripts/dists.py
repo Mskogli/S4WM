@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
-from models.s4wm.dists import OneHotDist, MSEDist
+from models.s4wm.dists import MSEDist
 
 tfd = tfp.distributions
 

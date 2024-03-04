@@ -135,6 +135,7 @@ class ImageEncoder(nn.Module):
         downsampled_chunks = [self._downsample(chunk) for chunk in chunks]
 
         return jnp.concatenate(downsampled_chunks, axis=1)
+        # return self._downsample(imgs)
 
 
 if __name__ == "__main__":

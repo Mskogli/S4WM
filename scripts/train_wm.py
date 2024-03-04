@@ -262,7 +262,7 @@ def train(
         if val_loss < best_loss:
             best_loss, best_epoch = val_loss, epoch
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}_discrete"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
@@ -292,9 +292,9 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2, 1"
-    os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
-    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    # os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     print(OmegaConf.to_yaml(cfg))
 

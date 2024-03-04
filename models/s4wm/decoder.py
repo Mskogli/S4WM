@@ -99,6 +99,7 @@ class ImageDecoder(nn.Module):
         downsampled_chunks = [self._upsample(chunk) for chunk in chunks]
 
         return jnp.concatenate(downsampled_chunks, axis=1)
+        # return self._upsample(latents)
 
 
 if __name__ == "__main__":

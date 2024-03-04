@@ -1,5 +1,7 @@
 import jax
+import orbax
 import jax.numpy as jnp
+import orbax.checkpoint
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
@@ -9,6 +11,7 @@ from .decoder import ImageDecoder
 from .encoder import ImageEncoder
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg
+from utils.dlpack import from_jax_to_torch, from_torch_to_jax
 
 from typing import Dict, Union, Tuple
 
@@ -34,11 +37,14 @@ class S4WorldModel(nn.Module):
 
     alpha: float = 0.8
     beta_rec: float = 1.0
-    beta_kl: float = 0.0
+    beta_kl: float = 1.0
 
     discrete_latent_state: bool = True
     training: bool = True
-    seed: int = 42
+    seed: int = 43
+
+    use_with_torch: bool = False
+    rnn_mode: bool = False
 
     S4_vars = {
         "hidden": None,  # x_k-1
@@ -55,22 +61,22 @@ class S4WorldModel(nn.Module):
             latent_dim=(
                 self.latent_dim if self.discrete_latent_state else 2 * self.latent_dim
             ),
-            act="silu",
+            act="elu",
         )
-        self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="silu")
+        self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="elu")
 
         self.PSSM_blocks = S4Block(
-            **self.S4_config, rnn_mode=False, training=self.training
+            **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
         )
 
         self.statistic_heads = {
-            "embedding": nn.Dense(
-                features=(
-                    self.latent_dim
-                    if self.discrete_latent_state
-                    else 2 * self.latent_dim
-                )
-            ),
+            # "embedding": nn.Dense(
+            #     features=(
+            #         self.latent_dim
+            #         if self.discrete_latent_state
+            #         else 2 * self.latent_dim
+            #     )
+            # ),
             "hidden": nn.Dense(
                 features=(
                     self.latent_dim
@@ -186,13 +192,21 @@ class S4WorldModel(nn.Module):
                 logits = jnp.log(probs)
             return {"logits": logits}
 
-        x = self.statistic_heads[statistics_head](x)
-        mean, std = jnp.split(x, 2, -1)
-        std = 2 * jax.nn.sigmoid(std / 2) + 0.1
-        return {"mean": mean, "std": std}
+        if statistics_head == "embedding":
+            mean, std = jnp.split(x, 2, -1)
+            std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+            return {"mean": mean, "std": std}
+        else:
+            x = self.statistic_heads[statistics_head](x)
+            mean, std = jnp.split(x, 2, -1)
+            std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+            return {"mean": mean, "std": std}
 
     def __call__(
-        self, imgs: jnp.ndarray, actions: jnp.ndarray
+        self,
+        imgs: jnp.ndarray,
+        actions: jnp.ndarray,
+        compute_reconstructions: bool = True,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 tuple
 
         batch_size, seq_length = imgs.shape[:2]
@@ -207,6 +221,7 @@ class S4WorldModel(nn.Module):
             )
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
+        print(z_posteriors.shape)
         g = self.input_head(
             jnp.concatenate((z_posteriors[:, :-1], actions[:, 1:]), axis=-1)
         )
@@ -217,7 +232,8 @@ class S4WorldModel(nn.Module):
 
         # Compute the image priors trough the hidden states and the latent posteriors
         img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
-        return z_posterior_dists, z_prior_dists, img_prior_dists
+        img_prior_dists_pred = self.get_image_prior_dists(hidden, z_prior_dists.mean())
+        return z_posterior_dists, z_prior_dists, img_prior_dists, img_prior_dists_pred
 
     def _init_RNN_mode(self, params, init_rng, init_depth, init_actions) -> None:
         # Add assert to check that the model is in RNN mode
@@ -237,7 +253,16 @@ class S4WorldModel(nn.Module):
     def _forward_RNN_mode(
         self, params, imgs, actions
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
-        preds, vars = self.apply(
+        assert all(
+            val is not None for val in self.S4_vars.values()
+        ), "The model needs to be initialized in RNN with self._init_RNN_mode"
+
+        if self.use_with_torch:
+            # Convert to jax arrays without taking data off GPU
+            imgs = from_torch_to_jax(imgs)
+            actions = from_torch_to_jax(actions)
+
+        data, vars = self.apply(
             {
                 "params": params,
                 "prime": self.S4_vars["matrices"],
@@ -259,10 +284,9 @@ class S4WorldModel(nn.Module):
             jnp.concatenate((context_posteriors, context_actions), axis=-1)
         )
         context_hiddens = self.PSSM_blocks(g)
-        last_prior = self.get_latent_prior_from_hidden(context_hiddens[:, -1]).sample(
-            seed=self.rng
-        )
-        return last_prior, context_hiddens[:, -1]
+
+        last_prior = self.get_latent_prior_from_hidden(context_hiddens).mean()[:, -1, :]
+        return last_prior, context_hiddens[:, -1, :]
 
     def _open_loop_prediction(
         self, prev_prior: jnp.ndarray, next_action: jnp.ndarray
@@ -270,14 +294,14 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    jnp.reshape(prev_prior, (-1, 1, self.latent_dim)),
-                    jnp.reshape(next_action, (-1, 1, self.num_actions)),
+                    prev_prior.reshape((-1, 1, self.latent_dim)),
+                    next_action.reshape((-1, 1, self.num_actions)),
                 ),
                 axis=-1,
             )
         )
         hidden = self.PSSM_blocks(g)
-        next_prior = self.get_latent_prior_from_hidden(hidden).sample(seed=self.rng)
+        next_prior = self.get_latent_prior_from_hidden(hidden).mean()
         return next_prior, hidden
 
     def _decode_predictions(
@@ -300,6 +324,10 @@ class S4WorldModel(nn.Module):
         dream_length: int = 10,
         viz: bool = False,
     ) -> jnp.ndarray:
+        context_imgs = jax.lax.stop_gradient(context_imgs)
+        context_actions = jax.lax.stop_gradient(context_actions)
+        dream_actions = jax.lax.stop_gradient(dream_actions)
+
         self._init_RNN_mode(
             params,
             (jax.random.PRNGKey(0), jax.random.PRNGKey(1)),
@@ -308,7 +336,7 @@ class S4WorldModel(nn.Module):
         )
 
         # Feed the model environment context
-        (last_prior, last_hidden), vars = self.apply(
+        (_, _, _, preds), vars = self.apply(
             {
                 "params": params,
                 "prime": self.S4_vars["matrices"],
@@ -317,33 +345,46 @@ class S4WorldModel(nn.Module):
             context_imgs,
             context_actions,
             mutable=["cache"],
-            method="_build_context",
         )
         self.S4_vars["hidden"] = vars["cache"]
 
-        priors = [jnp.expand_dims(last_prior, axis=1)]
-        hiddens = [jnp.expand_dims(last_hidden, axis=1)]
+        # priors = [jnp.expand_dims(last_prior, axis=1)]
+        # hiddens = [jnp.expand_dims(last_hidden, axis=1)]
 
-        for i in range(dream_length):
-            (last_prior, last_hidden), vars = self.apply(
-                {
-                    "params": params,
-                    "prime": self.S4_vars["matrices"],
-                    "cache": self.S4_vars["hidden"],
-                },
-                last_prior,
-                dream_actions[:, i],
-                mutable=["cache"],
-                method="_open_loop_prediction",
-            )
-            self.S4_vars["hidden"] = vars["cache"]
-            priors.append(last_prior)
-            hiddens.append(last_hidden)
+        # for i in range(dream_length):
+        #     (last_prior, last_hidden), vars = self.apply(
+        #         {
+        #             "params": params,
+        #             "prime": self.S4_vars["matrices"],
+        #             "cache": self.S4_vars["hidden"],
+        #         },
+        #         last_prior,
+        #         dream_actions[:, i],
+        #         mutable=["cache"],
+        #         method="_open_loop_prediction",
+        #     )
+        #     self.S4_vars["hidden"] = vars["cache"]
+        #     priors.append(last_prior)
+        #     hiddens.append(last_hidden)
 
-        pred_imgs = self.apply(
-            {"params": params}, hiddens, priors, method="_decode_predictions"
+        return preds
+
+    def init_from_checkpoint(self, ckpt_dir: str) -> dict:
+        rng = jax.random.PRNGKey(self.seed)
+        init_rng, dropout_rng = jax.random.split(rng, num=2)
+        init_imgs = jax.random.normal(init_rng, (1, 4, 270, 480, 1))
+        init_actions = jax.random.normal(init_rng, (1, 4, 4))
+
+        _ = self.init(
+            {"params": init_rng, "dropout": dropout_rng}, init_imgs, init_actions
         )
-        return pred_imgs
+
+        ckpt_mngr = orbax.checkpoint.Checkpointer(
+            orbax.checkpoint.PyTreeCheckpointHandler()
+        )
+        ckpt_state = ckpt_mngr.restore(ckpt_dir, item=None)
+
+        return ckpt_state["params"]
 
 
 if __name__ == "__main__":

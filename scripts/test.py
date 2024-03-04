@@ -1,6 +1,8 @@
 import jax
 import hydra
 import os
+import orbax
+
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
@@ -8,8 +10,6 @@ from omegaconf import DictConfig, OmegaConf
 from models.s4wm.s4_wm import S4WorldModel
 from data.dataloaders import create_depth_dataset
 from flax.training import checkpoints
-
-import orbax
 
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
@@ -35,28 +35,27 @@ def main(cfg: DictConfig) -> None:
     )
     params = params["params"]
 
-    NOTARGET_CKPT_DIR = f"/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_47"
+    NOTARGET_CKPT_DIR = f"/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_78"
     ckptr = orbax.checkpoint.Checkpointer(orbax.checkpoint.PyTreeCheckpointHandler())
     ckpt_state = ckptr.restore(NOTARGET_CKPT_DIR, item=None)
-
     params = ckpt_state["params"]
-    # print("params", params.keys())
-
-    # ckpt_state = checkpoints.restore_checkpoint(
-    #     f"/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_47",
-    #     target=None,
-    #     orbax_checkpointer=None,
-    # )
 
     preds = model.apply(
         {"params": params}, jnp.expand_dims(test_depth_imgs, axis=-1), test_actions
     )
     pred_depth = preds[2].mean()
-    # print(pred_depth.shape)
+    pred_pred_depth = preds[3].mean()
+    pred_posteriors = preds[0].mean()
+    pred_priors = preds[1].mean()
+
+    print(pred_posteriors[0, 74, 0:20])
+    print(pred_priors[0, 74, 0:20])
 
     for i in range(74):
         pred = pred_depth[0, i, :].reshape((270, 480))
+        pred_p = pred_pred_depth[0, i, :].reshape((270, 480))
         plt.imsave(f"imgs/test_{i}.png", pred)
+        plt.imsave(f"imgs/test_hat_{i}.png", pred_p)
         plt.imsave(
             f"imgs/test_label{i}.png", test_depth_imgs[0, i + 1, :].reshape((270, 480))
         )

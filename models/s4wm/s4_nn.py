@@ -39,7 +39,7 @@ class StackedPSSMBlocks(nn.Module):
                 embedding=self.embedding,
                 rnn_mode=self.rnn_mode,
             )
-            for _ in range(6)
+            for _ in range(4)
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:

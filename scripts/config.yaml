@@ -7,8 +7,8 @@ wm:
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
-  beta_kl: 0.1
-  discrete_latent_state: False
+  beta_kl: 1.0
+  discrete_latent_state: True
 
 model:
   d_model: 1024
@@ -17,6 +17,7 @@ model:
   layer:
     l_max: 74
     N: 128
+
 train:
   epochs: 100
   bsz: 2
