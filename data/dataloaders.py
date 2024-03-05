@@ -53,8 +53,8 @@ def create_depth_dataset(
     )
 
     train_dataset, val_dataset = split_dataset(dataset, 0.1)
-    train_loader = NumpyLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = NumpyLoader(val_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = NumpyLoader(train_dataset, batch_size=batch_size, shuffle=False)
+    val_loader = NumpyLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader
 

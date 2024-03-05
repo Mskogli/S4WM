@@ -36,6 +36,7 @@ def map_nested_fn(fn):
 def create_train_state(
     rng,
     model_cls,
+    trainloader,
     lr=1e-3,
     lr_layer=None,
     lr_schedule=False,
@@ -45,8 +46,8 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth = jax.random.normal(init_rng, (1, 75, 270, 480, 1))
-    init_actions = jax.random.normal(init_rng, (1, 75, 4))
+    init_depth, init_actions = next(iter(trainloader))
+    init_depth = np.expand_dims(init_depth, axis=-1)
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -232,6 +233,7 @@ def train(
     state = create_train_state(
         rng,
         model_cls,
+        trainloader,
         lr=train.lr,
         lr_layer=lr_layer,
         lr_schedule=train.lr_schedule,
@@ -253,7 +255,7 @@ def train(
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
-        val_loss, recons = validate(state.params, model_cls, testloader)
+        val_loss, _ = validate(state.params, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
@@ -262,7 +264,7 @@ def train(
         if val_loss < best_loss:
             best_loss, best_epoch = val_loss, epoch
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}_discrete"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
@@ -273,12 +275,6 @@ def train(
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
         if wandb is not None:
-            # wandb_images = [
-            #     wandb.Image(
-            #         img.reshape(270, 480, 1, caption=f"recon_sample_{i}")
-            #         for i, img in enumerate(recons)
-            #     )
-            # ]
             wandb.log(
                 {
                     "train/loss": train_loss,
@@ -292,8 +288,7 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    # os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     print(OmegaConf.to_yaml(cfg))

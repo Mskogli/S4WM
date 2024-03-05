@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 
 from flax import linen as nn
-from functools import partial
 from jax.nn.initializers import normal
 
 from .s4_ssm import (
@@ -16,7 +15,6 @@ from .s4_ssm import (
 
 
 class StackedPSSMBlocks(nn.Module):
-    layer_cls: nn.Module
     layer: dict  # Extra arguments to pass into layer constructor
     d_model: int
     n_layers: int
@@ -29,7 +27,6 @@ class StackedPSSMBlocks(nn.Module):
     def setup(self) -> None:
         self.blocks = [
             StackedModel(
-                layer_cls=self.layer_cls,
                 layer=self.layer,
                 d_model=self.d_model,
                 n_layers=self.n_layers,
@@ -39,7 +36,7 @@ class StackedPSSMBlocks(nn.Module):
                 embedding=self.embedding,
                 rnn_mode=self.rnn_mode,
             )
-            for _ in range(4)
+            for _ in range(5)
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:
@@ -49,7 +46,6 @@ class StackedPSSMBlocks(nn.Module):
 
 
 class StackedModel(nn.Module):
-    layer_cls: nn.Module
     layer: dict  # Extra arguments to pass into layer constructor
     d_model: int
     n_layers: int
@@ -69,7 +65,6 @@ class StackedModel(nn.Module):
 
         self.layers = [
             SequenceBlock(
-                layer_cls=self.layer_cls,
                 layer=self.layer,
                 prenorm=self.prenorm,
                 d_model=self.d_model,
@@ -81,9 +76,9 @@ class StackedModel(nn.Module):
         ]
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-
         for layer in self.layers:
             x = layer(x)
+
         skip = x
         x = self.norm(x)
         x = self.dense_1(x)
@@ -97,7 +92,6 @@ class StackedModel(nn.Module):
 
 
 class SequenceBlock(nn.Module):
-    layer_cls: nn.Module
     layer: dict  # Hyperparameters of inner layer
     dropout: float
     d_model: int
@@ -107,7 +101,7 @@ class SequenceBlock(nn.Module):
     rnn_mode: bool = False
 
     def setup(self) -> None:
-        self.seq = self.layer_cls(**self.layer, rnn_mode=self.rnn_mode)
+        self.seq = S4Layer(**self.layer, rnn_mode=self.rnn_mode)
         self.norm = nn.LayerNorm()
         self.out = nn.Dense(self.d_model)
         if self.glu:
@@ -205,13 +199,16 @@ class S4Layer(nn.Module):
     def __call__(self, u: jnp.ndarray) -> jnp.ndarray:
         if not self.rnn_mode:
             # CNN Mode - paralell forward pass
-            return causal_convolution(u, self.K) + self.D * u
+            y = causal_convolution(u, self.K) + self.D * u
+            return y
         else:
             # RNN Mode
+            self.x_k_1.value = jnp.zeros((self.N,), jnp.complex64)
             x_k, y_s = scan_SSM(*self.ssm, u[:, jnp.newaxis], self.x_k_1.value)
             if self.is_mutable_collection("cache"):
                 self.x_k_1.value = x_k
-            return y_s.reshape(-1).real + self.D * u
+            y = y_s.reshape(-1).real + self.D * u
+            return y
 
 
 def cloneLayer(layer):
@@ -227,7 +224,7 @@ def cloneLayer(layer):
 S4Layer = cloneLayer(S4Layer)
 
 S4Block = nn.vmap(
-    partial(StackedPSSMBlocks, layer_cls=S4Layer, rnn_mode=False),
+    StackedPSSMBlocks,
     in_axes=0,
     out_axes=0,
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},

@@ -10,60 +10,52 @@ from omegaconf import DictConfig, OmegaConf
 from models.s4wm.s4_wm import S4WorldModel
 from data.dataloaders import create_depth_dataset
 from flax.training import checkpoints
-
-
-def init_S4_RNN_mode(model, params, x0, rng_init, rng_drop) -> None:
-    variables = model.init(rng_init, x0[0], x0[1])
-    vars = {
-        "params": params,
-        "cache": variables["cache"],
-        "prime": variables["prime"],
-    }
-
-    _, prime_vars = model.apply(vars, x0[0], x0[1], mutable=["prime"])
-    return vars["params"], prime_vars["prime"], vars["cache"]
+import numpy
 
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    torch.random.manual_seed(0)
+    OmegaConf.set_struct(cfg, False)  # Allow writing keys
 
+    torch.manual_seed(101)
+    numpy.random.seed(101)
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=True, **cfg.wm)
+    trainloader, _ = create_depth_dataset(batch_size=2)
+    test_depth_imgs, test_actions = next(iter(trainloader))
 
-    ckpt_dir = "/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_55"
-    ckpt_mngr = orbax.checkpoint.Checkpointer(
-        orbax.checkpoint.PyTreeCheckpointHandler()
-    )
-    ckpt_state = ckpt_mngr.restore(ckpt_dir, item=None)
+    test_depth_imgs = jax.lax.stop_gradient(jnp.expand_dims(test_depth_imgs, axis=-1))
+    test_actions = jax.lax.stop_gradient(test_actions)
+
+    rng = jax.random.PRNGKey(0)
+    init_rng, _ = jax.random.split(rng, num=2)
+
+    init_depth = jnp.zeros((2, 75, 270, 480, 1))
+    init_actions = jnp.zeros((2, 75, 4))
+
+    NOTARGET_CKPT_DIR = f"/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97"
+    ckptr = orbax.checkpoint.Checkpointer(orbax.checkpoint.PyTreeCheckpointHandler())
+    ckpt_state = ckptr.restore(NOTARGET_CKPT_DIR, item=None)
     params = ckpt_state["params"]
 
-    trainloader, _ = create_depth_dataset(batch_size=40)
-    test_depth_imgs, test_actions = next(iter(trainloader))
-    test_depth_imgs = jnp.expand_dims(test_depth_imgs, axis=-1)
-    imgs = test_depth_imgs[22].reshape(1, 75, 270, 480, 1)
-    actions = test_actions[22].reshape(1, 75, 4)
-    rng_init = jax.random.PRNGKey(0)
-    rng_drop = jax.random.PRNGKey(1)
+    model._init_RNN_mode(init_rng, init_depth, init_actions)
 
-    x0 = (jnp.zeros_like(imgs), jnp.zeros_like(actions))
-    params, prime, cache = init_S4_RNN_mode(model, params, x0, rng_init, rng_drop)
+    preds = model._forward_RNN_mode(params, test_depth_imgs, test_actions)
 
-    (_, _, pred_imgs, ppred_imgs), vars = model.apply(
-        {"params": ckpt_state["params"], "prime": prime, "cache": cache},
-        imgs,
-        actions,
-        mutable=["cache"],
-    )
-    cache = vars["cache"]
+    pred_depth = preds[2].mean()
+    pred_pred_depth = preds[3].mean()
+    pred_posteriors = preds[0].mean()
+    pred_priors = preds[1].mean()
 
-    for i in range(40):
-        pred = pred_imgs.mean()[0, i, :].reshape((270, 480))
-        ppred = ppred_imgs.mean()[0, i, :].reshape((270, 480))
-        plt.imsave(f"imgs/dream_pred_{i}.png", pred)
-        plt.imsave(f"imgs/dream_ppred_{i}.png", ppred)
-        plt.imsave(f"imgs/dream_label_{i}.png", imgs[0, i, :].reshape((270, 480)))
+    for i in range(74):
+        pred = pred_depth[1, i, :].reshape((270, 480))
+        pred_p = pred_pred_depth[1, i, :].reshape((270, 480))
+        plt.imsave(f"imgs/test_{i}.png", pred)
+        plt.imsave(f"imgs/test_hat_{i}.png", pred_p)
+        plt.imsave(
+            f"imgs/test_label{i}.png", test_depth_imgs[1, i + 1, :].reshape((270, 480))
+        )
+
     plt.show()
 
 

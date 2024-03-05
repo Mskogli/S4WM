@@ -17,7 +17,7 @@ class DepthImageDataset(Dataset):
         self.device = device
         self.actions = actions
         self.num_trajs = 2000
-        self.max_depth_value = 30
+        self.max_depth_value = 20
         self.min_depth_value = 0.1
 
     def __len__(self) -> int:

@@ -70,13 +70,13 @@ class S4WorldModel(nn.Module):
         )
 
         self.statistic_heads = {
-            # "embedding": nn.Dense(
-            #     features=(
-            #         self.latent_dim
-            #         if self.discrete_latent_state
-            #         else 2 * self.latent_dim
-            #     )
-            # ),
+            "embedding": nn.Dense(
+                features=(
+                    self.latent_dim
+                    if self.discrete_latent_state
+                    else 2 * self.latent_dim
+                )
+            ),
             "hidden": nn.Dense(
                 features=(
                     self.latent_dim
@@ -221,10 +221,10 @@ class S4WorldModel(nn.Module):
             )
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
-        print(z_posteriors.shape)
         g = self.input_head(
             jnp.concatenate((z_posteriors[:, :-1], actions[:, 1:]), axis=-1)
         )
+
         hidden = self.PSSM_blocks(g)
 
         # Compute the latent prior distributions from the hidden state
@@ -232,22 +232,23 @@ class S4WorldModel(nn.Module):
 
         # Compute the image priors trough the hidden states and the latent posteriors
         img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
-        img_prior_dists_pred = self.get_image_prior_dists(hidden, z_prior_dists.mean())
-        return z_posterior_dists, z_prior_dists, img_prior_dists, img_prior_dists_pred
-
-    def _init_RNN_mode(self, params, init_rng, init_depth, init_actions) -> None:
-        # Add assert to check that the model is in RNN mode
-        variables = self.init(
-            {"params": init_rng[0], "dropout": init_rng[1]}, init_depth, init_actions
+        img_prior_dists_pred = self.get_image_prior_dists(
+            hidden,
+            (
+                z_prior_dists.mean()
+                if not self.discrete_latent_state
+                else z_prior_dists.mean().reshape(
+                    batch_size, seq_length - 1, self.latent_dim
+                )
+            ),
         )
-        vars = {
-            "params": params,
-            "cache": variables["cache"],
-            "prime": variables["prime"],
-        }
-        _, prime_vars = self.apply(vars, init_depth, init_actions, mutable=["prime"])
+        return z_posterior_dists, z_prior_dists, img_prior_dists
 
-        self.S4_vars = {"hidden": vars["cache"], "matrices": prime_vars["prime"]}
+    def _init_RNN_mode(self, init_rng, init_depth, init_actions) -> None:
+        # Add assert to check that the model is in RNN mode
+        variables = self.init(init_rng, init_depth, init_actions)
+
+        self.S4_vars = {"hidden": variables["cache"], "matrices": variables["prime"]}
         return
 
     def _forward_RNN_mode(
@@ -257,12 +258,7 @@ class S4WorldModel(nn.Module):
             val is not None for val in self.S4_vars.values()
         ), "The model needs to be initialized in RNN with self._init_RNN_mode"
 
-        if self.use_with_torch:
-            # Convert to jax arrays without taking data off GPU
-            imgs = from_torch_to_jax(imgs)
-            actions = from_torch_to_jax(actions)
-
-        data, vars = self.apply(
+        preds, vars = self.apply(
             {
                 "params": params,
                 "prime": self.S4_vars["matrices"],
