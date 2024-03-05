@@ -125,7 +125,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist = self.get_distribution_from_statistics(
             statistics=statistics, dist_type=dist_type
         )
-        z_prior = z_prior_dist.mean()
+        z_prior = z_prior_dist.sample(seed=self.rng)
         batch_size, seq_length = hidden.shape[:2]
         z_prior = (
             z_prior.reshape(batch_size, seq_length, self.latent_dim)
@@ -237,8 +237,8 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    out["z_posterior"]["sample"],
-                    actions,
+                    out["z_posterior"]["sample"][:, :-1],
+                    actions[:, 1:],
                 ),
                 axis=-1,
             )
@@ -251,18 +251,20 @@ class S4WorldModel(nn.Module):
 
         if compute_reconstructions:
             # Reconstruct depth images by decoding the hidden and latent posterior states
+
             out["depth"]["recon"] = self.reconstruct_depth(
-                out["hidden"][:, :-1], out["z_posterior"]["sample"][:, 1:]
-            ).mean()
+                out["hidden"], out["z_posterior"]["sample"][:, 1:]
+            )
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
                 out["hidden"], out["z_prior"]["sample"]
-            ).mean()
+            )
 
         return out
 
     def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
+        assert self.rnn_mode
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
         vars = {
             "params": params,
@@ -278,7 +280,7 @@ class S4WorldModel(nn.Module):
     def forward_RNN_mode(
         self, params, imgs, actions, compute_reconstructions: bool = False
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
-
+        assert self.rnn_mode
         preds, vars = self.apply(
             {
                 "params": params,
@@ -294,6 +296,15 @@ class S4WorldModel(nn.Module):
 
         return preds
 
+    def init_CNN_mode(self, init_imgs, init_actions) -> None:
+        assert not self.rnn_mode
+        variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
+
+    def forward_CNN_mode(
+        self, params, imgs, actions, compute_reconstructions: bool = False
+    ):
+        return self.apply({"params": params}, actions, imgs, compute_reconstructions)
+
     def restore_checkpoint_state(self, ckpt_dir: str) -> dict:
         ckptr = orbax.checkpoint.Checkpointer(
             orbax.checkpoint.PyTreeCheckpointHandler()
@@ -302,6 +313,7 @@ class S4WorldModel(nn.Module):
 
         return ckpt_state
 
+    # Dreaming utils
     def _build_context(
         self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
     ) -> None:

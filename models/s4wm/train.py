@@ -53,6 +53,7 @@ def create_train_state(
         {"params": init_rng, "dropout": dropout_rng},
         init_depth,
         init_actions,
+        compute_reconstructions=True,
     )
 
     params = params["params"]
@@ -133,7 +134,6 @@ def train_epoch(state, rng, model_cls, trainloader):
 
 def validate(params, model_cls, testloader):
     losses = []
-    recons = []
     model = model_cls(training=False)
 
     for batch_depth, batch_actions in tqdm(testloader):
@@ -142,7 +142,7 @@ def validate(params, model_cls, testloader):
         )
         batch_depth = np.expand_dims(batch_depth, axis=-1)
 
-        loss, recon = eval_step(
+        loss = eval_step(
             batch_depth,
             batch_actions,
             batch_depth_labels,
@@ -150,9 +150,8 @@ def validate(params, model_cls, testloader):
             model,
         )
 
-        recons.append(recon)
         losses.append(loss)
-    return np.mean(np.array(losses)), recons
+    return np.mean(np.array(losses))
 
 
 @partial(jax.jit, static_argnums=5)
@@ -160,19 +159,20 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
 
     def loss_fn(params):
 
-        z_posterior, z_prior, img_prior = model.apply(
+        out = model.apply(
             {"params": params},
-            batch_depth,  # Depth images
-            batch_actions,  # Actions
+            batch_depth,
+            batch_actions,
+            compute_reconstructions=True,
             rngs={"dropout": rng},
             mutable=["intermediates"],
         )[0]
 
         loss = model.compute_loss(
-            img_prior_dist=img_prior,
+            img_prior_dist=out["depth"]["recon"],
             img_posterior=batch_depth_labels,
-            z_posterior_dist=z_posterior[:, 1:],
-            z_prior_dist=z_prior,
+            z_posterior_dist=out["z_posterior"]["dist"][:, :1],
+            z_prior_dist=out["z_posterior"]["dist"],
         )
 
         return np.mean(loss)
@@ -187,20 +187,20 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
 @partial(jax.jit, static_argnums=4)
 def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
-    z_posterior, z_prior, img_prior = model.apply(
-        {"params": params}, batch_depth, batch_actions
+    out = model.apply(
+        {"params": params}, batch_depth, batch_actions, compute_reconstructions=True
     )
 
     loss = model.compute_loss(
-        img_prior_dist=img_prior,
+        img_prior_dist=out["depth"]["recon"],
         img_posterior=batch_depth_labels,
-        z_posterior_dist=z_posterior[:, 1:],
-        z_prior_dist=z_prior,
+        z_posterior_dist=out["z_posterior"]["dist"][:, :1],
+        z_prior_dist=out["z_posterior"]["dist"],
     )
 
     loss = np.mean(loss)
 
-    return loss, img_prior.mean()[:, 10, ...]
+    return loss
 
 
 def train(
@@ -286,9 +286,9 @@ def train(
             wandb.run.summary["Best Epoch"] = best_epoch
 
 
-@hydra.main(version_base=None, config_path=".", config_name="config")
+@hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     print(OmegaConf.to_yaml(cfg))

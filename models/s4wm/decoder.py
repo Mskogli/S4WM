@@ -8,6 +8,7 @@ from jax.nn.initializers import glorot_uniform, zeros
 class ImageDecoder(nn.Module):
     latent_dim: int
     act: str = "elu"
+    process_in_chunks: bool = True
 
     def setup(self) -> None:
 
@@ -95,11 +96,14 @@ class ImageDecoder(nn.Module):
 
     def __call__(self, latents: jnp.ndarray) -> jnp.ndarray:
         # Running the forward pass in chunks requires less contiguous memory
-        # chunks = jnp.array_split(latents, 4, axis=1)
-        # downsampled_chunks = [self._upsample(chunk) for chunk in chunks]
 
-        # return jnp.concatenate(downsampled_chunks, axis=1)
-        return self._upsample(latents)
+        if self.process_in_chunks:
+            chunks = jnp.array_split(latents, 4, axis=1)
+            downsampled_chunks = [self._upsample(chunk) for chunk in chunks]
+
+            return jnp.concatenate(downsampled_chunks, axis=1)
+        else:
+            return self._upsample(latents)
 
 
 if __name__ == "__main__":
