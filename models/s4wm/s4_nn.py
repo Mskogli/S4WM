@@ -18,6 +18,7 @@ class StackedPSSMBlocks(nn.Module):
     layer: dict  # Extra arguments to pass into layer constructor
     d_model: int
     n_layers: int
+    n_blocks: int = 5
     prenorm: bool = True
     dropout: float = 0.1
     training: bool = True
@@ -36,7 +37,7 @@ class StackedPSSMBlocks(nn.Module):
                 embedding=self.embedding,
                 rnn_mode=self.rnn_mode,
             )
-            for _ in range(5)
+            for _ in range(self.n_blocks)
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:
@@ -160,7 +161,6 @@ class S4Layer(nn.Module):
         self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
 
         if not self.rnn_mode:
-            # CNN mode, compute kernel.
             self.K = kernel_DPLR(
                 self.Lambda,
                 self.P,
@@ -170,9 +170,7 @@ class S4Layer(nn.Module):
                 self.step,
                 self.l_max,
             )
-
         else:
-            # RNN mode, discretize
 
             # Flax trick to cache discrete form during decoding.
             def init_discrete():
@@ -186,29 +184,29 @@ class S4Layer(nn.Module):
                     self.l_max,
                 )
 
+            # RNN Cache
+            self.x_k_1 = self.variable(
+                "cache", "cache_x_k", lambda: jnp.zeros((self.N,), dtype=jnp.complex64)
+            )
+
             ssm_var = self.variable("prime", "ssm", init_discrete)
             if self.is_mutable_collection("prime"):
                 ssm_var.value = init_discrete()
+                self.x_k_1.value = jnp.zeros((self.N,), dtype=jnp.complex64)
             self.ssm = ssm_var.value
-
-            # RNN Cache
-            self.x_k_1 = self.variable(
-                "cache", "cache_x_k", jnp.zeros, (self.N,), jnp.complex64
-            )
 
     def __call__(self, u: jnp.ndarray) -> jnp.ndarray:
         if not self.rnn_mode:
             # CNN Mode - paralell forward pass
-            y = causal_convolution(u, self.K) + self.D * u
-            return y
+            return causal_convolution(u, self.K) + self.D * u
         else:
             # RNN Mode
-            self.x_k_1.value = jnp.zeros((self.N,), jnp.complex64)
             x_k, y_s = scan_SSM(*self.ssm, u[:, jnp.newaxis], self.x_k_1.value)
-            if self.is_mutable_collection("cache"):
+            if self.is_mutable_collection("cache") and not self.is_mutable_collection(
+                "prime"
+            ):
                 self.x_k_1.value = x_k
-            y = y_s.reshape(-1).real + self.D * u
-            return y
+            return y_s.reshape(-1).real + self.D * u
 
 
 def cloneLayer(layer):

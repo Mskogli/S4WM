@@ -95,11 +95,11 @@ class ImageDecoder(nn.Module):
 
     def __call__(self, latents: jnp.ndarray) -> jnp.ndarray:
         # Running the forward pass in chunks requires less contiguous memory
-        chunks = jnp.array_split(latents, 4, axis=1)
-        downsampled_chunks = [self._upsample(chunk) for chunk in chunks]
+        # chunks = jnp.array_split(latents, 4, axis=1)
+        # downsampled_chunks = [self._upsample(chunk) for chunk in chunks]
 
-        return jnp.concatenate(downsampled_chunks, axis=1)
-        # return self._upsample(latents)
+        # return jnp.concatenate(downsampled_chunks, axis=1)
+        return self._upsample(latents)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 import jax
 import orbax
+import torch
 import jax.numpy as jnp
 import orbax.checkpoint
+import time
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
@@ -92,19 +94,23 @@ class S4WorldModel(nn.Module):
         self, image: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         embedding = self.encoder(image)
-
         posterior_statistics = self.get_statistics(
             x=embedding,
             statistics_head="embedding",
             discrete=self.discrete_latent_state,
             unimix=0.01,
         )
-
         dist_type = "OneHot" if self.discrete_latent_state else "NormalDiag"
         z_posterior_dist = self.get_distribution_from_statistics(
             statistics=posterior_statistics, dist_type=dist_type
         )
         z_posterior = z_posterior_dist.sample(seed=self.rng)
+        batch_size, seq_length = image.shape[:2]
+        z_posterior = (
+            z_posterior.reshape(batch_size, seq_length, self.latent_dim)
+            if self.discrete_latent_state
+            else z_posterior
+        )
 
         return z_posterior, z_posterior_dist
 
@@ -115,14 +121,20 @@ class S4WorldModel(nn.Module):
             discrete=self.discrete_latent_state,
             unimix=0.01,
         )
-
         dist_type = "OneHot" if self.discrete_latent_state else "NormalDiag"
         z_prior_dist = self.get_distribution_from_statistics(
             statistics=statistics, dist_type=dist_type
         )
-        return z_prior_dist
+        z_prior = z_prior_dist.mean()
+        batch_size, seq_length = hidden.shape[:2]
+        z_prior = (
+            z_prior.reshape(batch_size, seq_length, self.latent_dim)
+            if self.discrete_latent_state
+            else z_prior
+        )
+        return z_prior, z_prior_dist
 
-    def get_image_prior_dists(
+    def reconstruct_depth(
         self, hidden: jnp.ndarray, z_posterior: jnp.ndarray
     ) -> tfd.Distribution:
         x = self.decoder(jnp.concatenate((hidden, z_posterior), axis=-1))
@@ -206,57 +218,66 @@ class S4WorldModel(nn.Module):
         self,
         imgs: jnp.ndarray,
         actions: jnp.ndarray,
-        compute_reconstructions: bool = True,
+        compute_reconstructions: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 tuple
 
-        batch_size, seq_length = imgs.shape[:2]
+        out = {
+            "z_posterior": {"dist": None, "sample": None},
+            "z_prior": {"dist": None, "sample": None},
+            "depth": {"recon": None, "pred": None},
+            "hidden": None,
+        }
 
         # Compute the latent posteriors from the input images
-        z_posteriors, z_posterior_dists = self.get_latent_posteriors_from_images(imgs)
-
-        # Reshape the posterior if the latent embedding is discrete (e.g. 32x32)
-        if self.discrete_latent_state:
-            z_posteriors = z_posteriors.reshape(
-                (batch_size, seq_length, self.latent_dim)
-            )
+        out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
+            self.get_latent_posteriors_from_images(imgs)
+        )
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
         g = self.input_head(
-            jnp.concatenate((z_posteriors[:, :-1], actions[:, 1:]), axis=-1)
+            jnp.concatenate(
+                (
+                    out["z_posterior"]["sample"],
+                    actions,
+                ),
+                axis=-1,
+            )
         )
-
-        hidden = self.PSSM_blocks(g)
-
+        out["hidden"] = self.PSSM_blocks(g)
         # Compute the latent prior distributions from the hidden state
-        z_prior_dists = self.get_latent_prior_from_hidden(hidden)
-
-        # Compute the image priors trough the hidden states and the latent posteriors
-        img_prior_dists = self.get_image_prior_dists(hidden, z_posteriors[:, 1:])
-        img_prior_dists_pred = self.get_image_prior_dists(
-            hidden,
-            (
-                z_prior_dists.mean()
-                if not self.discrete_latent_state
-                else z_prior_dists.mean().reshape(
-                    batch_size, seq_length - 1, self.latent_dim
-                )
-            ),
+        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
+            self.get_latent_prior_from_hidden(out["hidden"])
         )
-        return z_posterior_dists, z_prior_dists, img_prior_dists
 
-    def _init_RNN_mode(self, init_rng, init_depth, init_actions) -> None:
-        # Add assert to check that the model is in RNN mode
-        variables = self.init(init_rng, init_depth, init_actions)
+        if compute_reconstructions:
+            # Reconstruct depth images by decoding the hidden and latent posterior states
+            out["depth"]["recon"] = self.reconstruct_depth(
+                out["hidden"][:, :-1], out["z_posterior"]["sample"][:, 1:]
+            ).mean()
 
-        self.S4_vars = {"hidden": variables["cache"], "matrices": variables["prime"]}
-        return
+            # Predict depth images by decoding the hidden and latent prior states
+            out["depth"]["pred"] = self.reconstruct_depth(
+                out["hidden"], out["z_prior"]["sample"]
+            ).mean()
 
-    def _forward_RNN_mode(
-        self, params, imgs, actions
+        return out
+
+    def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
+        variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
+        vars = {
+            "params": params,
+            "cache": variables["cache"],
+            "prime": variables["prime"],
+        }
+        _, prime_vars = self.apply(
+            vars, init_imgs, init_actions, mutable=["prime", "cache"]
+        )
+        self.S4_vars["hidden"] = vars["cache"]
+        self.S4_vars["matrices"] = prime_vars["prime"]
+
+    def forward_RNN_mode(
+        self, params, imgs, actions, compute_reconstructions: bool = False
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
-        assert all(
-            val is not None for val in self.S4_vars.values()
-        ), "The model needs to be initialized in RNN with self._init_RNN_mode"
 
         preds, vars = self.apply(
             {
@@ -266,11 +287,20 @@ class S4WorldModel(nn.Module):
             },
             imgs,
             actions,
+            compute_reconstructions,
             mutable=["cache"],
         )
         self.S4_vars["hidden"] = vars["cache"]
 
         return preds
+
+    def restore_checkpoint_state(self, ckpt_dir: str) -> dict:
+        ckptr = orbax.checkpoint.Checkpointer(
+            orbax.checkpoint.PyTreeCheckpointHandler()
+        )
+        ckpt_state = ckptr.restore(ckpt_dir, item=None)
+
+        return ckpt_state
 
     def _build_context(
         self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
@@ -308,7 +338,7 @@ class S4WorldModel(nn.Module):
 
         hiddens = jnp.reshape(hiddens, (-1, len(hiddens), self.latent_dim))
         priors = jnp.reshape(priors, (-1, len(priors), self.latent_dim))
-        img_post = self.get_image_prior_dists(hiddens, priors)
+        img_post = self.reconstruct_depth(hiddens, priors)
         return img_post.mean()
 
     def dream(
@@ -364,23 +394,6 @@ class S4WorldModel(nn.Module):
         #     hiddens.append(last_hidden)
 
         return preds
-
-    def init_from_checkpoint(self, ckpt_dir: str) -> dict:
-        rng = jax.random.PRNGKey(self.seed)
-        init_rng, dropout_rng = jax.random.split(rng, num=2)
-        init_imgs = jax.random.normal(init_rng, (1, 4, 270, 480, 1))
-        init_actions = jax.random.normal(init_rng, (1, 4, 4))
-
-        _ = self.init(
-            {"params": init_rng, "dropout": dropout_rng}, init_imgs, init_actions
-        )
-
-        ckpt_mngr = orbax.checkpoint.Checkpointer(
-            orbax.checkpoint.PyTreeCheckpointHandler()
-        )
-        ckpt_state = ckpt_mngr.restore(ckpt_dir, item=None)
-
-        return ckpt_state["params"]
 
 
 if __name__ == "__main__":

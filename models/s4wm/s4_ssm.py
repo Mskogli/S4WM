@@ -21,6 +21,7 @@ def scan_SSM(
     def step(x_k_1, u_k):
         x_k = Ab @ x_k_1 + Bb @ u_k
         y_k = Cb @ x_k
+
         return x_k, y_k
 
     return jax.lax.scan(step, x0, u)
