@@ -263,6 +263,52 @@ class S4WorldModel(nn.Module):
 
         return out
 
+    def forward_single_step(
+        self, image: jax.Array, action: jax.Array, compute_recon: bool = False
+    ) -> None:
+
+        out = {
+            "z_posterior": {"dist": None, "sample": None},
+            "z_prior": {"dist": None, "sample": None},
+            "depth": {"recon": None, "pred": None},
+            "hidden": None,
+        }
+
+        # Compute the latent posteriors from the input images
+        out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
+            self.get_latent_posteriors_from_images(image)
+        )
+
+        # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
+        g = self.input_head(
+            jnp.concatenate(
+                (
+                    out["z_posterior"]["sample"],
+                    action,
+                ),
+                axis=-1,
+            )
+        )
+        out["hidden"] = self.PSSM_blocks(g)
+        # Compute the latent prior distributions from the hidden state
+        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
+            self.get_latent_prior_from_hidden(out["hidden"])
+        )
+
+        if compute_recon:
+            # Reconstruct depth images by decoding the hidden and latent posterior states
+
+            out["depth"]["recon"] = self.reconstruct_depth(
+                out["hidden"], out["z_posterior"]["sample"]
+            )
+
+            # Predict depth images by decoding the hidden and latent prior states
+            out["depth"]["pred"] = self.reconstruct_depth(
+                out["hidden"], out["z_prior"]["sample"]
+            )
+
+        return out
+
     def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
         assert self.rnn_mode
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
@@ -278,21 +324,42 @@ class S4WorldModel(nn.Module):
         self.S4_vars["matrices"] = prime_vars["prime"]
 
     def forward_RNN_mode(
-        self, params, imgs, actions, compute_reconstructions: bool = False
+        self,
+        params,
+        imgs,
+        actions,
+        compute_reconstructions: bool = False,
+        single_step: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
         assert self.rnn_mode
-        preds, vars = self.apply(
-            {
-                "params": params,
-                "prime": self.S4_vars["matrices"],
-                "cache": self.S4_vars["hidden"],
-            },
-            imgs,
-            actions,
-            compute_reconstructions,
-            mutable=["cache"],
-        )
-        self.S4_vars["hidden"] = vars["cache"]
+        preds = {}
+        if not single_step:
+            preds, vars = self.apply(
+                {
+                    "params": params,
+                    "prime": self.S4_vars["matrices"],
+                    "cache": self.S4_vars["hidden"],
+                },
+                imgs,
+                actions,
+                compute_reconstructions,
+                mutable=["cache"],
+            )
+            self.S4_vars["hidden"] = vars["cache"]
+        else:
+            preds, vars = self.apply(
+                {
+                    "params": params,
+                    "prime": self.S4_vars["matrices"],
+                    "cache": self.S4_vars["hidden"],
+                },
+                imgs,
+                actions,
+                compute_reconstructions,
+                mutable=["cache"],
+                method="forward_single_step",
+            )
+            self.S4_vars["hidden"] = vars["cache"]
 
         return preds
 
