@@ -24,4 +24,4 @@ if __name__ == "__main__":
 
     kl_div = dist_kl_1.kl_divergence(dist_kl_2)
 
-    print(jnp.sum(log_probs, axis=-1) / (470 * 280))
+    print(isinstance(dist_kl_1, (MSEDist, tfd.MultivariateNormalDiag)))

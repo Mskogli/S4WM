@@ -47,6 +47,7 @@ class S4WorldModel(nn.Module):
 
     use_with_torch: bool = False
     rnn_mode: bool = False
+    process_in_chunks: bool = True
 
     S4_vars = {
         "hidden": None,  # x_k-1
@@ -63,9 +64,14 @@ class S4WorldModel(nn.Module):
             latent_dim=(
                 self.latent_dim if self.discrete_latent_state else 2 * self.latent_dim
             ),
+            process_in_chunks=self.process_in_chunks,
             act="elu",
         )
-        self.decoder = ImageDecoder(latent_dim=self.latent_dim, act="elu")
+        self.decoder = ImageDecoder(
+            latent_dim=self.latent_dim,
+            process_in_chunks=self.process_in_chunks,
+            act="elu",
+        )
 
         self.PSSM_blocks = S4Block(
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
@@ -291,9 +297,9 @@ class S4WorldModel(nn.Module):
         )
         out["hidden"] = self.PSSM_blocks(g)
         # Compute the latent prior distributions from the hidden state
-        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-            self.get_latent_prior_from_hidden(out["hidden"])
-        )
+        # out["z_prior"]["sample"], out["z_prior"]["dist"] = (
+        #     self.get_latent_prior_from_hidden(out["hidden"])
+        # )
 
         if compute_recon:
             # Reconstruct depth images by decoding the hidden and latent posterior states
@@ -320,12 +326,10 @@ class S4WorldModel(nn.Module):
         _, prime_vars = self.apply(
             vars, init_imgs, init_actions, mutable=["prime", "cache"]
         )
-        self.S4_vars["hidden"] = vars["cache"]
-        self.S4_vars["matrices"] = prime_vars["prime"]
+        return vars["cache"], prime_vars["prime"]
 
     def forward_RNN_mode(
         self,
-        params,
         imgs,
         actions,
         compute_reconstructions: bool = False,
@@ -334,33 +338,17 @@ class S4WorldModel(nn.Module):
         assert self.rnn_mode
         preds = {}
         if not single_step:
-            preds, vars = self.apply(
-                {
-                    "params": params,
-                    "prime": self.S4_vars["matrices"],
-                    "cache": self.S4_vars["hidden"],
-                },
+            preds = self.__call__(
                 imgs,
                 actions,
                 compute_reconstructions,
-                mutable=["cache"],
             )
-            self.S4_vars["hidden"] = vars["cache"]
         else:
-            preds, vars = self.apply(
-                {
-                    "params": params,
-                    "prime": self.S4_vars["matrices"],
-                    "cache": self.S4_vars["hidden"],
-                },
+            preds = self.forward_single_step(
                 imgs,
                 actions,
                 compute_reconstructions,
-                mutable=["cache"],
-                method="forward_single_step",
             )
-            self.S4_vars["hidden"] = vars["cache"]
-
         return preds
 
     def init_CNN_mode(self, init_imgs, init_actions) -> None:
