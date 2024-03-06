@@ -9,8 +9,8 @@ from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from models.s4wm import S4WorldModel, S4Layer
-from data.dataloaders import Dataloaders
+from s4wm.nn.s4_wm import S4WorldModel, S4Layer
+from s4wm.data.dataloaders import Dataloaders
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
