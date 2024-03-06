@@ -267,7 +267,7 @@ class S4WorldModel(nn.Module):
         return out
 
     def forward_single_step(
-        self, image: jax.Array, action: jax.Array, compute_recon: bool = False
+        self, image: jax.Array, action: jax.Array, compute_recon: bool = True
     ) -> None:
 
         out = {
