@@ -14,6 +14,7 @@ def log_step_initializer(dt_min: float = 0.001, dt_max: float = 0.1) -> Callable
     return init
 
 
+@jax.jit
 def scan_SSM(
     Ab: jnp.ndarray, Bb: jnp.ndarray, Cb: jnp.ndarray, u: jnp.ndarray, x0: jnp.ndarray
 ) -> jnp.ndarray:

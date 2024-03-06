@@ -171,8 +171,8 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
         loss = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
             img_posterior=batch_depth_labels,
-            z_posterior_dist=out["z_posterior"]["dist"][:, :1],
-            z_prior_dist=out["z_posterior"]["dist"],
+            z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
+            z_prior_dist=out["z_prior"]["dist"],
         )
 
         return np.mean(loss)
@@ -194,8 +194,8 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
     loss = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
         img_posterior=batch_depth_labels,
-        z_posterior_dist=out["z_posterior"]["dist"][:, :1],
-        z_prior_dist=out["z_posterior"]["dist"],
+        z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
+        z_prior_dist=out["z_prior"]["dist"],
     )
 
     loss = np.mean(loss)
@@ -255,7 +255,7 @@ def train(
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
-        val_loss, _ = validate(state.params, model_cls, testloader)
+        val_loss = validate(state.params, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")

@@ -2,7 +2,7 @@
 
 S4WM, first introduced in https://arxiv.org/pdf/2307.02064.pdf attempts to model the dynamics of an environment in a compact latent space.
 
-![Alt text](s4wm.png "Optional title")
+![Alt text](assets/s4wm.png "Optional title")
 
 *Figure from https://arxiv.org/pdf/2307.02064.pdf*
 

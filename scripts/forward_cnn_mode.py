@@ -14,11 +14,11 @@ import torch
 import numpy
 
 
-@hydra.main(version_base=None, config_path=".", config_name="config")
+@hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    SEED = 21
+    SEED = 5
     torch.manual_seed(SEED)
     numpy.random.seed(SEED)
 
@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97"
+        "models/s4wm/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=2-latent_type=cont/checkpoint_41"
     )["params"]
 
     model.init(jax.random.PRNGKey(0), init_depth, init_actions)
@@ -41,10 +41,10 @@ def main(cfg: DictConfig) -> None:
         {"params": params}, test_depth_imgs, test_actions, compute_reconstructions=True
     )
 
-    depth = out["depth"]["pred"]
+    depth = out["depth"]["pred"].mean()
 
     for i in range(10):
-        plt.imsave(f"imgs/pred_cnn_{i}.png", depth[0, i, :].reshape(270, 480))
+        plt.imsave(f"imgs/pred{i}.png", depth[0, i + 60, :].reshape(270, 480))
 
 
 if __name__ == "__main__":
