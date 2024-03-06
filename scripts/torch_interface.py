@@ -70,11 +70,11 @@ def main(cfg: dict) -> None:
     )["params"]
     cache, prime = S4wm.init_RNN_mode(params, init_depth, init_actions)
 
-    torch_inputs_imgs = torch.zeros(
+    torch_inputs_imgs = torch.rand(
         (NUM_ENVS, 1, 270, 480, 1), device="cuda:0", requires_grad=False
     )
 
-    torch_inputs_actions = torch.zeros(
+    torch_inputs_actions = torch.rand(
         (NUM_ENVS, 1, 4), device="cuda:0", requires_grad=False
     )
 
@@ -90,6 +90,7 @@ def main(cfg: dict) -> None:
             S4wm, params, cache, prime, torch_inputs_imgs, torch_inputs_actions
         )
         end = time.time()
+        print(end - start)
         fwp_times.append(end - start)
 
     fwp_times = jnp.array(fwp_times)
