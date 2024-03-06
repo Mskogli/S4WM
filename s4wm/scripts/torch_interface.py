@@ -5,8 +5,8 @@ import os
 import time
 import jax.numpy as jnp
 
-import utils.dlpack
-from s4wm import S4WorldModel
+from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
+from s4wm.nn.s4_wm import S4WorldModel
 from functools import partial
 
 
@@ -33,16 +33,14 @@ def _jitted_forward(
 def forward_world_model_torch(
     model, params, cache, prime, imgs: torch.tensor, actions: torch.tensor
 ) -> torch.tensor:
-    jax_imgs, jax_actions = utils.dlpack.from_torch_to_jax(
-        imgs
-    ), utils.dlpack.from_torch_to_jax(actions)
+    jax_imgs, jax_actions = from_torch_to_jax(imgs), from_torch_to_jax(actions)
 
     jax_preds, vars = _jitted_forward(
         model, params, cache, prime, jax_imgs, jax_actions
     )
     return (
-        utils.dlpack.from_jax_to_torch(jax_preds["hidden"]),
-        utils.dlpack.from_jax_to_torch(jax_preds["z_posterior"]["dist"].mean()),
+        from_jax_to_torch(jax_preds["hidden"]),
+        from_jax_to_torch(jax_preds["z_posterior"]["dist"].mean()),
         vars["cache"],
     )
 
@@ -84,7 +82,7 @@ def main(cfg: dict) -> None:
     )
 
     fwp_times = []
-    for _ in range(1000):
+    for _ in range(100):
         start = time.time()
         _ = forward_world_model_torch(
             S4wm, params, cache, prime, torch_inputs_imgs, torch_inputs_actions

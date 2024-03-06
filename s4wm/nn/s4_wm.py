@@ -1,9 +1,7 @@
 import jax
 import orbax
-import torch
 import jax.numpy as jnp
 import orbax.checkpoint
-import time
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
@@ -13,7 +11,6 @@ from .decoder import ImageDecoder
 from .encoder import ImageEncoder
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg
-from utils.dlpack import from_jax_to_torch, from_torch_to_jax
 
 from typing import Dict, Union, Tuple
 

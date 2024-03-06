@@ -1,17 +1,15 @@
 import jax
 import hydra
 import os
-import orbax
+import torch
+import numpy
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from omegaconf import DictConfig, OmegaConf
-from models.s4wm.s4_wm import S4WorldModel
+from omegaconf import DictConfig
+from s4wm import S4WorldModel
 from data.dataloaders import create_depth_dataset
-from flax.training import checkpoints
-import torch
-import numpy
 
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
