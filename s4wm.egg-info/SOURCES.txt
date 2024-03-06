@@ -15,7 +15,6 @@ models/s4wm/train.py
 s4wm.egg-info/PKG-INFO
 s4wm.egg-info/SOURCES.txt
 s4wm.egg-info/dependency_links.txt
-s4wm.egg-info/requires.txt
 s4wm.egg-info/top_level.txt
 scripts/__init__.py
 scripts/dists.py

@@ -2,23 +2,5 @@ Metadata-Version: 2.1
 Name: s4wm
 Version: 0.1.0
 Summary: A short description of the package
-Home-page: https://github.com/yourusername/your_package_name
 Author: Your Name
 Author-email: your.email@example.com
-Classifier: Programming Language :: Python :: 3
-Classifier: License :: OSI Approved :: MIT License
-Classifier: Operating System :: OS Independent
-Description-Content-Type: text/markdown
-Requires-Dist: numpy
-Requires-Dist: jax
-Requires-Dist: torch
-
-# Structured State Space Sequence World Models (S4WM)
-
-S4WM, first introduced in https://arxiv.org/pdf/2307.02064.pdf attempts to model the dynamics of an environment in a compact latent space.
-
-![Alt text](assets/s4wm.png "Optional title")
-
-*Figure from https://arxiv.org/pdf/2307.02064.pdf*
-
-The base implementation of the s4 sequence model (s4_nn.py/s4_ssm.py) started as an adaptation of the code in https://github.com/srush/annotated-s4, which is the codebase for the great blog post https://srush.github.io/annotated-s4/.

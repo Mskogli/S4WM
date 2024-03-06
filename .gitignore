@@ -3,3 +3,6 @@ outputs/
 checkpoints/
 wandb/
 imgs/
+
+s4wm.egg-info/
+wandb/
