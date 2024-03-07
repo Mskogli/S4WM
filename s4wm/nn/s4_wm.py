@@ -38,7 +38,7 @@ class S4WorldModel(nn.Module):
     beta_rec: float = 1.0
     beta_kl: float = 1.0
 
-    discrete_latent_state: bool = True
+    discrete_latent_state: bool = False
     training: bool = True
     seed: int = 43
 
@@ -151,8 +151,12 @@ class S4WorldModel(nn.Module):
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
-        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
-        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
+        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist) / (
+            self.latent_dim
+        )
+        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist)) / (
+            self.latent_dim
+        )
 
         if clip:
             dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
@@ -161,7 +165,9 @@ class S4WorldModel(nn.Module):
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
-        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
+        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32)) / (
+            270 * 480
+        )
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
         return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
