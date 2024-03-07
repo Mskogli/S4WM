@@ -16,9 +16,9 @@ from .s4_ssm import (
 
 class StackedPSSMBlocks(nn.Module):
     layer: dict  # Extra arguments to pass into layer constructor
-    d_model: int
-    n_layers: int
-    n_blocks: int = 5
+    d_model: int = 512
+    n_layers: int = 2
+    n_blocks: int = 4
     prenorm: bool = True
     dropout: float = 0.1
     training: bool = True
@@ -26,6 +26,7 @@ class StackedPSSMBlocks(nn.Module):
     rnn_mode: bool = False
 
     def setup(self) -> None:
+        self.dense = nn.Dense(features=self.d_model)
         self.blocks = [
             StackedModel(
                 layer=self.layer,
@@ -41,6 +42,9 @@ class StackedPSSMBlocks(nn.Module):
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:
+        x = self.dense(x)
+        x = nn.gelu(x)
+
         for block in self.blocks:
             x = block(x)
         return x
@@ -130,8 +134,8 @@ class SequenceBlock(nn.Module):
 
 
 class S4Layer(nn.Module):
-    N: int
-    l_max: int
+    N: int = 256
+    l_max: int = 1
     rnn_mode: bool = False
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)

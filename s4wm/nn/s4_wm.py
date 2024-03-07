@@ -1,9 +1,7 @@
 import jax
 import orbax
-import torch
 import jax.numpy as jnp
 import orbax.checkpoint
-import time
 
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
@@ -13,7 +11,6 @@ from .decoder import ImageDecoder
 from .encoder import ImageEncoder
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg
-from utils.dlpack import from_jax_to_torch, from_torch_to_jax
 
 from typing import Dict, Union, Tuple
 
@@ -78,13 +75,7 @@ class S4WorldModel(nn.Module):
         )
 
         self.statistic_heads = {
-            "embedding": nn.Dense(
-                features=(
-                    self.latent_dim
-                    if self.discrete_latent_state
-                    else 2 * self.latent_dim
-                )
-            ),
+            "embedding": lambda x: x,
             "hidden": nn.Dense(
                 features=(
                     self.latent_dim
@@ -155,15 +146,17 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
+        clip: bool = False,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
-        dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
-
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
-        representation_loss = jnp.maximum(representation_loss, 1.0)
+
+        if clip:
+            dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
+            representation_loss = jnp.maximum(representation_loss)
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
@@ -210,15 +203,10 @@ class S4WorldModel(nn.Module):
                 logits = jnp.log(probs)
             return {"logits": logits}
 
-        if statistics_head == "embedding":
-            mean, std = jnp.split(x, 2, -1)
-            std = 2 * jax.nn.sigmoid(std / 2) + 0.1
-            return {"mean": mean, "std": std}
-        else:
-            x = self.statistic_heads[statistics_head](x)
-            mean, std = jnp.split(x, 2, -1)
-            std = 2 * jax.nn.sigmoid(std / 2) + 0.1
-            return {"mean": mean, "std": std}
+        x = self.statistic_heads[statistics_head](x)
+        mean, std = jnp.split(x, 2, -1)
+        std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+        return {"mean": mean, "std": std}
 
     def __call__(
         self,
@@ -270,7 +258,7 @@ class S4WorldModel(nn.Module):
         return out
 
     def forward_single_step(
-        self, image: jax.Array, action: jax.Array, compute_recon: bool = False
+        self, image: jax.Array, action: jax.Array, compute_recon: bool = True
     ) -> None:
 
         out = {

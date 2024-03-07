@@ -1,7 +1,8 @@
 import jax
 import jax.numpy as jnp
+
 from tensorflow_probability.substrates import jax as tfp
-from models.s4wm.dists import MSEDist
+from s4wm.nn.dists import MSEDist
 
 tfd = tfp.distributions
 
@@ -12,8 +13,8 @@ if __name__ == "__main__":
     mean = jax.random.normal(key, (4, 45, 270 * 480))
     mean_2 = jax.random.normal(key_1, (4, 45, 270 * 480))
 
-    mean_kl_1 = jax.random.normal(key, (4, 45, 1024))
-    mean_kl_2 = jax.random.normal(key_1, (4, 45, 1024))
+    mean_kl_1 = jax.random.normal(key, (4, 45, 512))
+    mean_kl_2 = jax.random.normal(key, (4, 45, 512)) + 0.1
 
     dist_kl_1 = tfd.MultivariateNormalDiag(mean_kl_1, jnp.ones_like(mean_kl_1))
     dist_kl_2 = tfd.MultivariateNormalDiag(mean_kl_2, jnp.ones_like(mean_kl_2))
@@ -24,4 +25,4 @@ if __name__ == "__main__":
 
     kl_div = dist_kl_1.kl_divergence(dist_kl_2)
 
-    print(isinstance(dist_kl_1, (MSEDist, tfd.MultivariateNormalDiag)))
+    print(kl_div)

@@ -9,8 +9,9 @@ from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from models.s4wm import S4WorldModel, S4Layer
-from data.dataloaders import Dataloaders
+from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.nn.s4_nn import S4Layer
+from s4wm.data.dataloaders import Dataloaders
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
@@ -124,7 +125,6 @@ def train_epoch(state, rng, model_cls, trainloader):
             model,
         )
         batch_losses.append(loss)
-        print("Batch loss: ", loss)
 
     return (
         state,
