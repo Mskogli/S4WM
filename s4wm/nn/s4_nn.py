@@ -26,6 +26,7 @@ class StackedPSSMBlocks(nn.Module):
     rnn_mode: bool = False
 
     def setup(self) -> None:
+        self.dense = nn.Dense(features=self.d_model)
         self.blocks = [
             StackedModel(
                 layer=self.layer,
@@ -41,6 +42,9 @@ class StackedPSSMBlocks(nn.Module):
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:
+        x = self.dense(x)
+        x = nn.gelu(x)
+
         for block in self.blocks:
             x = block(x)
         return x

@@ -3,7 +3,7 @@ layer: s4
 seed: 5
 
 wm:
-  latent_dim: 512
+  latent_dim: 256
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
@@ -11,13 +11,13 @@ wm:
   discrete_latent_state: False
 
 model:
-  d_model: 512
+  d_model: 1024
   n_layers: 2
-  n_blocks: 4
+  n_blocks: 6
   dropout: 0.1
   layer:
     l_max: 74
-    N: 256
+    N: 128
 
 train:
   epochs: 200
