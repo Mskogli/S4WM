@@ -25,9 +25,9 @@ def _jitted_forward(
 ) -> jax.Array:
     return model.apply(
         {
-            "params": params,
-            "cache": cache,
-            "prime": prime,
+            "params": sg(params),
+            "cache": sg(cache),
+            "prime": sg(prime),
         },
         imgs,
         actions,
@@ -46,6 +46,7 @@ class TorchWrapper:
         d_pssm_block: int = 512,
         d_ssm: int = 128,
     ) -> None:
+        self.d_pssm_block = 512
         self.model = S4WorldModel(
             S4_config=DictConfig(
                 {
@@ -60,7 +61,7 @@ class TorchWrapper:
                 {
                     "latent_dim": d_latent,
                 }
-            )
+            ),
         )
 
         self.params = self.model.restore_checkpoint_state(ckpt_path)["params"]
@@ -113,13 +114,26 @@ class TorchWrapper:
             self.model, self.params, self.rnn_cache, self.prime, jax_imgs, jax_actions
         )
         self.rnn_cache = vars["cache"]
+        print(
+            self.rnn_cache["PSSM_blocks"]["blocks_0"]["layers_0"]["seq"][
+                "cache_x_k"
+            ].shape
+        )
 
         return (
             from_jax_to_torch(jax_preds["hidden"]),
             from_jax_to_torch(jax_preds["z_posterior"]["dist"].mean()),
         )
 
-    def reset_cache(batch_idx: int) -> None:
+    def reset_cache(self, batch_idx: int) -> None:
+        for i in range(self.model.PSSM_blocks.n_blocks):
+            for j in range(2):
+                self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                    "cache_x_k"
+                ][batch_idx] = jnp.zeros(
+                    (self.N, self.d_pssm_block), dtype=jnp.complex64
+                )
+
         pass
 
 
