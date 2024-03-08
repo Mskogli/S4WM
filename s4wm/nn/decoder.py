@@ -8,7 +8,7 @@ from jax.nn.initializers import glorot_uniform, zeros
 class ImageDecoder(nn.Module):
     latent_dim: int
     act: str = "elu"
-    process_in_chunks: bool = True
+    process_in_chunks: bool = False
 
     def setup(self) -> None:
 

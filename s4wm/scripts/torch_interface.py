@@ -11,6 +11,7 @@ from typing import Tuple
 
 from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
 from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.data.dataloaders import create_depth_dataset
 
 
 tree_map = jax.tree_util.tree_map
@@ -51,7 +52,7 @@ class TorchWrapper:
             S4_config=DictConfig(
                 {
                     "d_model": d_pssm_block,
-                    "layer": {"l_max": 1, "N": d_ssm},
+                    "layer": {"l_max": 74, "N": d_ssm},
                 }
             ),
             training=False,
@@ -134,32 +135,29 @@ class TorchWrapper:
 
 if __name__ == "__main__":
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 
-    NUM_ENVS = 68
+    NUM_ENVS = 1
 
     torch_wm = TorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=2-latent_type=cont/checkpoint_2",
-        d_latent=256,
-        d_pssm_block=512,
+        "/home/mathias/dev/structured-state-space-wm/s4wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97",
+        d_latent=1024,
+        d_pssm_block=1024,
     )
 
-    torch_inputs_imgs = torch.rand(
-        (NUM_ENVS, 1, 270, 480, 1), device="cuda:0", requires_grad=False
-    )
-    torch_inputs_actions = torch.rand(
-        (NUM_ENVS, 1, 4), device="cuda:0", requires_grad=False
-    )
+    _, val_loader = create_depth_dataset(batch_size=1)
+    test_depth_imgs, test_actions, _ = next(iter(val_loader))
+    test_depth_imgs, test_actions = torch.unsqueeze(test_depth_imgs, 1), test_actions
 
-    _ = torch_wm.forward(torch_inputs_imgs, torch_inputs_actions)
-
+    # Compile
+    _ = torch_wm.forward(test_depth_imgs, test_actions)
     fwp_times = []
-    for _ in range(500):
+    for _ in range(200):
         start = time.time()
-        _ = torch_wm.forward(torch_inputs_imgs, torch_inputs_actions)
+        _ = torch_wm.forward(test_depth_imgs, test_actions)
         end = time.time()
         fwp_times.append(end - start)
     fwp_times = jnp.array(fwp_times)

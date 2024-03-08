@@ -2,6 +2,8 @@ import numpy as np
 
 from jax.tree_util import tree_map
 from torch.utils import data
+from torch.utils.data import Dataset, random_split, DataLoader
+
 
 from .depth_img_dataset import DepthImageDataset, split_dataset
 
@@ -48,13 +50,13 @@ def create_depth_dataset(
 
     dataset = DepthImageDataset(
         "/home/mathias/dev/quad_depth_imgs_2",
-        "cpu",
+        "cuda:0",
         actions=True,
     )
 
     train_dataset, val_dataset = split_dataset(dataset, 0.1)
-    train_loader = NumpyLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = NumpyLoader(val_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
     return train_loader, val_loader
 

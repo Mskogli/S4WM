@@ -3,7 +3,7 @@ layer: s4
 seed: 5
 
 wm:
-  latent_dim: 512
+  latent_dim: 1024
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
@@ -13,10 +13,10 @@ wm:
 model:
   d_model: 1024
   n_layers: 2
-  n_blocks: 5
-  dropout: 0.05
+  n_blocks: 4
+  dropout: 0
   layer:
-    l_max: 74
+    l_max: 400
     N: 128
 
 train:

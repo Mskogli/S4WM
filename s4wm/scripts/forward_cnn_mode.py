@@ -35,6 +35,7 @@ def main(cfg: DictConfig) -> None:
     )["params"]
 
     model.init(jax.random.PRNGKey(0), init_depth, init_actions)
+
     out = model.apply(
         {"params": params}, test_depth_imgs, test_actions, compute_reconstructions=True
     )

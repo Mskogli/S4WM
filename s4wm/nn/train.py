@@ -12,6 +12,7 @@ from tqdm import tqdm
 from s4wm.nn.s4_wm import S4WorldModel
 from s4wm.nn.s4_nn import S4Layer
 from s4wm.data.dataloaders import Dataloaders
+from s4wm.utils.dlpack import from_torch_to_jax
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
@@ -47,8 +48,10 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth, init_actions = next(iter(trainloader))
-    init_depth = np.expand_dims(init_depth, axis=-1)
+    init_depth, init_actions, _ = next(iter(trainloader))
+    init_depth, init_actions = from_torch_to_jax(init_depth), from_torch_to_jax(
+        init_actions
+    )
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -109,19 +112,15 @@ def train_epoch(state, rng, model_cls, trainloader):
     model = model_cls(training=True)
     batch_losses = []
 
-    for batch_depth, batch_actions in tqdm(trainloader):
+    for batch_depth, batch_actions, batch_labels in tqdm(trainloader):
         rng, drop_rng = jax.random.split(rng)
-        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
-            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
-        )
-        batch_depth = np.expand_dims(batch_depth, axis=-1)
 
         state, loss = train_step(
             state,
             drop_rng,
-            batch_depth,
-            batch_actions,
-            batch_depth_labels,
+            from_torch_to_jax(batch_depth),
+            from_torch_to_jax(batch_actions),
+            from_torch_to_jax(batch_labels),
             model,
         )
         batch_losses.append(loss)
@@ -287,7 +286,7 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 

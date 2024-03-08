@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from torch.utils.data import Dataset, random_split, DataLoader
 from typing import List, Tuple
+from s4wm.utils.dlpack import from_torch_to_jax
 
 
 class DepthImageDataset(Dataset):
@@ -27,13 +28,23 @@ class DepthImageDataset(Dataset):
         depth_images = []
         actions = []
 
-        for i in range(75):
+        for i in range(1):
             dataset = self.file[f"trajectory_{idx}/image_{i}"]
             img_data = dataset[:]
-            depth_images.append(torch.from_numpy(img_data).view(1, 270, 480))
-            actions.append(torch.from_numpy(dataset.attrs["actions"]).view(1, 4))
+            depth_images.append(
+                torch.from_numpy(img_data)
+                .view(1, 270, 480, 1)
+                .to(torch.device(self.device))
+            )
+            actions.append(
+                torch.from_numpy(dataset.attrs["actions"])
+                .view(1, 4)
+                .to(torch.device(self.device))
+            )
 
         imgs = torch.cat(depth_images, dim=0)
+
+        # Process images
         imgs[torch.isinf(imgs)] = self.max_depth_value
         imgs[imgs > self.max_depth_value] = self.max_depth_value
         imgs[imgs < self.min_depth_value] = self.min_depth_value
@@ -42,8 +53,9 @@ class DepthImageDataset(Dataset):
         )
 
         acts = torch.cat(actions, dim=0)
+        labels = imgs[1:, :].view(-1, 270 * 480)
 
-        return imgs, acts
+        return (imgs, acts, labels)
 
 
 def split_dataset(
@@ -60,14 +72,14 @@ if __name__ == "__main__":
 
     dataset = DepthImageDataset(
         "/home/mathias/dev/quad_depth_imgs_2",
-        "cpu",
+        "cuda:1",
         actions=True,
     )
 
     train_dataset, val_dataset = split_dataset(dataset, 0.1)
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
 
-    train_batch, _ = next(iter(train_loader))
+    train_batch, _, _ = next(iter(train_loader))
 
     for idx, image in enumerate(train_batch[0], 1):
         print(idx)

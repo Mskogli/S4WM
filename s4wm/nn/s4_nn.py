@@ -98,7 +98,7 @@ class SequenceBlock(nn.Module):
     dropout: float
     d_model: int
     prenorm: bool = True
-    glu: bool = True
+    glu: bool = False
     training: bool = True
     rnn_mode: bool = False
 
@@ -201,6 +201,7 @@ class S4Layer(nn.Module):
         else:
             # RNN Mode
             x_k, y_s = scan_SSM(*self.ssm, u[:, jnp.newaxis], self.x_k_1.value)
+            print(x_k.shape, y_s.shape)
             if self.is_mutable_collection("cache") and not self.is_mutable_collection(
                 "prime"
             ):

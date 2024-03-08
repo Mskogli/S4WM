@@ -1,20 +1,44 @@
-import jax
 import hydra
 import os
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import orbax.checkpoint
 import torch
+import jax
 
 from omegaconf import DictConfig
-from models.s4wm.s4_wm import S4WorldModel
-from data.dataloaders import create_depth_dataset
+from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.data.dataloaders import create_depth_dataset
+from s4wm.utils.dlpack import from_torch_to_jax
 import numpy
+from functools import partial
+
+tree_map = jax.tree_util.tree_map
+sg = lambda x: tree_map(
+    jax.lax.stop_gradient, x
+)  # stop gradient - used for KL balancing
+
+
+@partial(jax.jit, static_argnums=(0))
+def _jitted_forward(
+    model, params, cache, prime, imgs: jax.Array, actions: jax.Array
+) -> jax.Array:
+    return model.apply(
+        {
+            "params": sg(params),
+            "cache": sg(cache),
+            "prime": sg(prime),
+        },
+        imgs,
+        actions,
+        single_step=False,
+        mutable=["cache"],
+        method="forward_RNN_mode",
+    )
 
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     SEED = 29
     torch.manual_seed(SEED)
@@ -22,31 +46,38 @@ def main(cfg: DictConfig) -> None:
 
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=True, **cfg.wm)
     trainloader, _ = create_depth_dataset(batch_size=2)
-    test_depth_imgs, test_actions = next(iter(trainloader))
+    test_depth_imgs, test_actions, _ = next(iter(trainloader))
 
-    test_depth_imgs = jax.lax.stop_gradient(jnp.expand_dims(test_depth_imgs, axis=-1))
-    test_actions = jax.lax.stop_gradient(test_actions)
-
-    init_depth = jnp.zeros_like(test_depth_imgs)
-    init_actions = jnp.zeros_like(test_actions)
+    init_depth = jnp.zeros((2, 4, 270, 480, 1))
+    init_actions = jnp.zeros((2, 4, 4))
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/models/s4wm/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=2-latent_type=cont/checkpoint_41"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97"
     )["params"]
 
-    model.init_RNN_mode(params, init_depth, init_actions)
-    out = model.forward_RNN_mode(
-        params, test_depth_imgs, test_actions, compute_reconstructions=True
-    )
+    cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
 
-    pred_depth = out["depth"]["pred"].mean()
-    recon_depth = out["depth"]["recon"].mean()
-    for i in range(10):
-        plt.imsave(f"imgs/pred_rnn_{i}.png", pred_depth[1, i + 60, :].reshape(270, 480))
-        plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i + 60, :].reshape(270, 480))
-        plt.imsave(
-            f"imgs/label_{i}.png", test_depth_imgs[1, i + 60, :].reshape(270, 480)
+    print("Initited")
+    for i in range(74):
+        out, variables = _jitted_forward(
+            model,
+            params,
+            cache,
+            prime,
+            from_torch_to_jax(test_depth_imgs),
+            from_torch_to_jax(test_actions),
         )
+        cache = variables["cache"]
+        print(i)
+
+    # pred_depth = out["depth"]["pred"].mean()
+    # recon_depth = out["depth"]["recon"].mean()
+    # for i in range(10):
+    #     plt.imsave(f"imgs/pred_rnn_{i}.png", pred_depth[1, i + 64, :].reshape(270, 480))
+    #     plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i + 64, :].reshape(270, 480))
+    #     plt.imsave(
+    #         f"imgs/label_{i}.png", test_depth_imgs[1, i + 64, :].reshape(270, 480)
+    #     )
 
 
 if __name__ == "__main__":

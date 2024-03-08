@@ -9,7 +9,7 @@ class ImageEncoder(nn.Module):
     latent_dim: int
     seq_len: int = 150
     act: str = "elu"
-    process_in_chunks: bool = True
+    process_in_chunks: bool = False
 
     def setup(self) -> None:
 
@@ -132,6 +132,7 @@ class ImageEncoder(nn.Module):
 
     def __call__(self, imgs: jnp.ndarray) -> jnp.ndarray:
         # Running the forward pass in chunks requires less contiguous memory
+        return self._downsample(imgs)
         if self.process_in_chunks:
             chunks = jnp.array_split(imgs, 4, axis=1)
             downsampled_chunks = [self._downsample(chunk) for chunk in chunks]

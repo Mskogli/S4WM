@@ -243,8 +243,6 @@ class S4WorldModel(nn.Module):
                 axis=-1,
             )
         )
-        g = nn.gelu(g)
-
         out["hidden"] = self.PSSM_blocks(g)
 
         # Compute the latent prior distributions from the hidden state
@@ -261,7 +259,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
+                out["hidden"], out["z_prior"]["dist"].mean()
             )
 
         return out
@@ -294,9 +292,9 @@ class S4WorldModel(nn.Module):
         )
         out["hidden"] = self.PSSM_blocks(g)
         # Compute the latent prior distributions from the hidden state
-        # out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-        #     self.get_latent_prior_from_hidden(out["hidden"])
-        # )
+        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
+            self.get_latent_prior_from_hidden(out["hidden"])
+        )
 
         if compute_recon:
             # Reconstruct depth images by decoding the hidden and latent posterior states
@@ -307,7 +305,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
+                out["hidden"], out["z_prior"]["dist"].mean()
             )
 
         return out
@@ -352,10 +350,8 @@ class S4WorldModel(nn.Module):
         assert not self.rnn_mode
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
 
-    def forward_CNN_mode(
-        self, params, imgs, actions, compute_reconstructions: bool = False
-    ):
-        return self.apply({"params": params}, actions, imgs, compute_reconstructions)
+    def forward_CNN_mode(self, imgs, actions, compute_reconstructions: bool = False):
+        return self._call_(actions, imgs, compute_reconstructions)
 
     def restore_checkpoint_state(self, ckpt_dir: str) -> dict:
         ckptr = orbax.checkpoint.Checkpointer(
@@ -373,10 +369,9 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate((context_posteriors, context_actions), axis=-1)
         )
-        context_hiddens = self.PSSM_blocks(g)
-
-        last_prior = self.get_latent_prior_from_hidden(context_hiddens).mean()[:, -1, :]
-        return last_prior, context_hiddens[:, -1, :]
+        last_hidden = self.PSSM_blocks(g)[:, -1, :]
+        last_prior, _ = self.get_latent_prior_from_hidden(last_hidden).mean()
+        return last_prior, last_hidden
 
     def _open_loop_prediction(
         self, prev_prior: jnp.ndarray, next_action: jnp.ndarray
@@ -391,7 +386,8 @@ class S4WorldModel(nn.Module):
             )
         )
         hidden = self.PSSM_blocks(g)
-        next_prior = self.get_latent_prior_from_hidden(hidden).mean()
+        next_prior, _ = self.get_latent_prior_from_hidden(hidden).mean()
+
         return next_prior, hidden
 
     def _decode_predictions(
@@ -407,14 +403,20 @@ class S4WorldModel(nn.Module):
 
     def dream(
         self,
-        params: dict,
         context_imgs: jnp.ndarray,
         context_actions: jnp.ndarray,
         dream_actions: jnp.ndarray,
         dream_length: int = 10,
         viz: bool = False,
     ) -> jnp.ndarray:
-        pass
+
+        last_prior, last_hidden = self._build_context(context_imgs, context_actions)
+        priors, hiddens = [last_prior], [last_hidden]
+
+        for i in range(dream_length):
+            pass
+
+        return
 
 
 if __name__ == "__main__":
