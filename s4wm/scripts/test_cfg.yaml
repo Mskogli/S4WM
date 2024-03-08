@@ -16,7 +16,7 @@ model:
   n_blocks: 4
   dropout: 0
   layer:
-    l_max: 400
+    l_max: 74
     N: 128
 
 train:

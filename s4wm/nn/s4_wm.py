@@ -305,7 +305,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["dist"].mean()
+                out["hidden"], out["z_prior"]["sample"]
             )
 
         return out

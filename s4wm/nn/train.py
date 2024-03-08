@@ -135,16 +135,14 @@ def validate(params, model_cls, testloader):
     losses = []
     model = model_cls(training=False)
 
-    for batch_depth, batch_actions in tqdm(testloader):
-        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
-            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
-        )
+    for batch_depth, batch_actions, batch_labels in tqdm(testloader):
+
         batch_depth = np.expand_dims(batch_depth, axis=-1)
 
         loss = eval_step(
-            batch_depth,
-            batch_actions,
-            batch_depth_labels,
+            from_torch_to_jax(batch_depth),
+            from_torch_to_jax(batch_actions),
+            from_torch_to_jax(batch_labels),
             params,
             model,
         )
