@@ -85,7 +85,7 @@ class S4WorldModel(nn.Module):
             ),
         }
 
-        self.input_head = nn.Dense(features=self.latent_dim)
+        self.input_head = nn.Dense(features=self.S4_config["d_model"])
 
     def get_latent_posteriors_from_images(
         self, image: jnp.ndarray
@@ -243,7 +243,10 @@ class S4WorldModel(nn.Module):
                 axis=-1,
             )
         )
+        g = nn.gelu(g)
+
         out["hidden"] = self.PSSM_blocks(g)
+
         # Compute the latent prior distributions from the hidden state
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"])
@@ -411,50 +414,7 @@ class S4WorldModel(nn.Module):
         dream_length: int = 10,
         viz: bool = False,
     ) -> jnp.ndarray:
-        context_imgs = jax.lax.stop_gradient(context_imgs)
-        context_actions = jax.lax.stop_gradient(context_actions)
-        dream_actions = jax.lax.stop_gradient(dream_actions)
-
-        self._init_RNN_mode(
-            params,
-            (jax.random.PRNGKey(0), jax.random.PRNGKey(1)),
-            jnp.zeros_like(context_imgs),
-            jnp.zeros_like(context_actions),
-        )
-
-        # Feed the model environment context
-        (_, _, _, preds), vars = self.apply(
-            {
-                "params": params,
-                "prime": self.S4_vars["matrices"],
-                "cache": self.S4_vars["hidden"],
-            },
-            context_imgs,
-            context_actions,
-            mutable=["cache"],
-        )
-        self.S4_vars["hidden"] = vars["cache"]
-
-        # priors = [jnp.expand_dims(last_prior, axis=1)]
-        # hiddens = [jnp.expand_dims(last_hidden, axis=1)]
-
-        # for i in range(dream_length):
-        #     (last_prior, last_hidden), vars = self.apply(
-        #         {
-        #             "params": params,
-        #             "prime": self.S4_vars["matrices"],
-        #             "cache": self.S4_vars["hidden"],
-        #         },
-        #         last_prior,
-        #         dream_actions[:, i],
-        #         mutable=["cache"],
-        #         method="_open_loop_prediction",
-        #     )
-        #     self.S4_vars["hidden"] = vars["cache"]
-        #     priors.append(last_prior)
-        #     hiddens.append(last_hidden)
-
-        return preds
+        pass
 
 
 if __name__ == "__main__":

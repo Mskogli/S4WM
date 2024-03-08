@@ -72,7 +72,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(1000), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(5), optax.adam(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -165,8 +165,7 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
             batch_actions,
             compute_reconstructions=True,
             rngs={"dropout": rng},
-            mutable=["intermediates"],
-        )[0]
+        )
 
         loss = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
@@ -288,8 +287,8 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 
     print(OmegaConf.to_yaml(cfg))

@@ -114,11 +114,6 @@ class TorchWrapper:
             self.model, self.params, self.rnn_cache, self.prime, jax_imgs, jax_actions
         )
         self.rnn_cache = vars["cache"]
-        print(
-            self.rnn_cache["PSSM_blocks"]["blocks_0"]["layers_0"]["seq"][
-                "cache_x_k"
-            ].shape
-        )
 
         return (
             from_jax_to_torch(jax_preds["hidden"]),
@@ -134,15 +129,16 @@ class TorchWrapper:
                     (self.N, self.d_pssm_block), dtype=jnp.complex64
                 )
 
-        pass
+        return
 
 
 if __name__ == "__main__":
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 
-    NUM_ENVS = 1
+    NUM_ENVS = 68
 
     torch_wm = TorchWrapper(
         NUM_ENVS,
