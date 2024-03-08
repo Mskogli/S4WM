@@ -67,10 +67,13 @@ class TorchWrapper:
 
         self.params = self.model.restore_checkpoint_state(ckpt_path)["params"]
 
+        init_depth = jnp.zeros((batch_dim, 1, 270, 480, 1))
+        init_actions = jnp.zeros((batch_dim, 1, 4))
+
         self.rnn_cache, self.prime = self.model.init_RNN_mode(
             self.params,
-            jnp.zeros((batch_dim, 1, 270, 480, 1)),
-            jnp.zeros((batch_dim, 1, 4)),
+            init_depth,
+            init_actions,
         )
 
         self.rnn_cache, self.prime, self.params = (
@@ -79,29 +82,16 @@ class TorchWrapper:
             sg(self.params),
         )
 
-        return
-
-    @partial(jax.jit, static_argnums=(0))
-    def _jitted_forward(
-        model,
-        params: dict,
-        cache: dict,
-        prime: dict,
-        depth_imgs: jax.Array,
-        actions: jax.Array,
-    ) -> dict:
-        return model.apply(
-            {
-                "params": params,
-                "cache": cache,
-                "prime": prime,
-            },
-            depth_imgs,
-            actions,
-            single_step=True,
-            mutable=["cache"],
-            method="forward_RNN_mode",
+        # Force compilation
+        _ = _jitted_forward(
+            self.model,
+            self.params,
+            self.rnn_cache,
+            self.prime,
+            init_depth,
+            init_actions,
         )
+        return
 
     def forward(
         self, depth_imgs: torch.tensor, actions: torch.tensor
@@ -137,7 +127,6 @@ if __name__ == "__main__":
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
-    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 
     NUM_ENVS = 1
 
@@ -150,15 +139,16 @@ if __name__ == "__main__":
 
     _, val_loader = create_depth_dataset(batch_size=1)
     test_depth_imgs, test_actions, _ = next(iter(val_loader))
-    test_depth_imgs, test_actions = torch.unsqueeze(test_depth_imgs, 1), test_actions
 
-    # Compile
-    _ = torch_wm.forward(test_depth_imgs, test_actions)
+    depth, actions = torch.unsqueeze(test_depth_imgs[:, 0], 1), torch.unsqueeze(
+        test_actions[:, 0], 1
+    )
     fwp_times = []
     for _ in range(200):
         start = time.time()
-        _ = torch_wm.forward(test_depth_imgs, test_actions)
+        _ = torch_wm.forward(depth, actions)
         end = time.time()
+        print(end - start)
         fwp_times.append(end - start)
     fwp_times = jnp.array(fwp_times)
 

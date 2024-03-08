@@ -28,7 +28,7 @@ class DepthImageDataset(Dataset):
         depth_images = []
         actions = []
 
-        for i in range(1):
+        for i in range(75):
             dataset = self.file[f"trajectory_{idx}/image_{i}"]
             img_data = dataset[:]
             depth_images.append(
