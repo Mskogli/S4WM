@@ -1,13 +1,12 @@
 import jax
 import torch
-import hydra
 import os
 import time
 import jax.numpy as jnp
 
 from functools import partial
 from omegaconf import DictConfig
-from typing import Tuple
+from typing import Tuple, Sequence
 
 from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
 from s4wm.nn.s4_wm import S4WorldModel
@@ -47,7 +46,9 @@ class TorchWrapper:
         d_pssm_block: int = 512,
         d_ssm: int = 128,
     ) -> None:
-        self.d_pssm_block = 512
+        self.d_pssm_block = d_pssm_block
+        self.d_ssm = d_ssm
+
         self.model = S4WorldModel(
             S4_config=DictConfig(
                 {
@@ -108,27 +109,30 @@ class TorchWrapper:
 
         return (
             from_jax_to_torch(jax_preds["hidden"]),
-            from_jax_to_torch(jax_preds["z_posterior"]["dist"].mean()),
+            from_jax_to_torch(jax_preds["z_posterior"]["sample"]),
         )
 
-    def reset_cache(self, batch_idx: int) -> None:
-        for i in range(self.model.PSSM_blocks.n_blocks):
+    def reset_cache(self, batch_idx: Sequence) -> None:
+        for i in range(4):
             for j in range(2):
                 self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
                     "cache_x_k"
-                ][batch_idx] = jnp.zeros(
-                    (self.N, self.d_pssm_block), dtype=jnp.complex64
+                ] = (
+                    self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                        "cache_x_k"
+                    ]
+                    .at[jnp.array([batch_idx])]
+                    .set(jnp.ones((self.d_ssm, self.d_pssm_block), dtype=jnp.complex64))
                 )
-
         return
 
 
 if __name__ == "__main__":
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
 
-    NUM_ENVS = 1
+    NUM_ENVS = 4
 
     torch_wm = TorchWrapper(
         NUM_ENVS,
@@ -136,6 +140,8 @@ if __name__ == "__main__":
         d_latent=1024,
         d_pssm_block=1024,
     )
+
+    torch_wm.reset_cache(batch_idx=[0, 3])
 
     _, val_loader = create_depth_dataset(batch_size=1)
     test_depth_imgs, test_actions, _ = next(iter(val_loader))

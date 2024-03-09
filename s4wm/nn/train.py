@@ -137,8 +137,6 @@ def validate(params, model_cls, testloader):
 
     for batch_depth, batch_actions, batch_labels in tqdm(testloader):
 
-        batch_depth = np.expand_dims(batch_depth, axis=-1)
-
         loss = eval_step(
             from_torch_to_jax(batch_depth),
             from_torch_to_jax(batch_actions),

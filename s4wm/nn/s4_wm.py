@@ -146,28 +146,23 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        clip: bool = False,
+        clip: bool = True,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
-        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist) / (
-            self.latent_dim
-        )
-        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist)) / (
-            self.latent_dim
-        )
+        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
+        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
         if clip:
             dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
-            representation_loss = jnp.maximum(representation_loss)
+            representation_loss = jnp.maximum(representation_loss, 1.0)
 
         kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
-        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32)) / (
-            270 * 480
-        )
+        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
+
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
         return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
@@ -249,6 +244,9 @@ class S4WorldModel(nn.Module):
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"])
         )
+
+        print(out["z_prior"]["sample"][0, 40, :10])
+        print(out["z_posterior"]["dist"].mean()[0, 40, :10])
 
         if compute_reconstructions:
             # Reconstruct depth images by decoding the hidden and latent posterior states

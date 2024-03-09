@@ -3,18 +3,18 @@ layer: s4
 seed: 5
 
 wm:
-  latent_dim: 512
+  latent_dim: 1024
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
-  beta_kl: 0.5
+  beta_kl: 0.2
   discrete_latent_state: False
 
 model:
   d_model: 1024
   n_layers: 2
-  n_blocks: 3
-  dropout: 0
+  n_blocks: 4
+  dropout: 0.05
   layer:
     l_max: 74
     N: 128
@@ -22,7 +22,7 @@ model:
 train:
   epochs: 200
   bsz: 2
-  lr: 0.001
+  lr: 0.0001
   lr_schedule: true
   weight_decay: 0.05
   checkpoint: true
