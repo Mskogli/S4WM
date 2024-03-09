@@ -75,7 +75,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(5), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(500), optax.adam(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -152,6 +152,7 @@ def validate(params, model_cls, testloader):
 @partial(jax.jit, static_argnums=5)
 def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
 
+    @jax.jit
     def loss_fn(params):
 
         out = model.apply(

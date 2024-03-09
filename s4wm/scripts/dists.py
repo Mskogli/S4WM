@@ -25,4 +25,4 @@ if __name__ == "__main__":
 
     kl_div = jnp.sum(dist_kl_1.kl_divergence(dist_kl_2), axis=-1)
 
-    print(-log_probs / (0.1 * kl_div), 0.1 * kl_div)
+    print(0.05 * (kl_div / 1024))

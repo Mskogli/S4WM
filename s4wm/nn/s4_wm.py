@@ -146,7 +146,7 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        clip: bool = True,
+        clip: bool = False,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
@@ -158,7 +158,9 @@ class S4WorldModel(nn.Module):
             dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
             representation_loss = jnp.maximum(representation_loss, 1.0)
 
-        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
+        kl_loss = (
+            self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
+        ) / self.latent_dim
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
@@ -175,7 +177,7 @@ class S4WorldModel(nn.Module):
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
             ).astype(f32)
-            return MSEDist(mean, 1)
+            return MSEDist(mean, 1, agg="mean")
         elif dist_type == "OneHot":
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
         elif dist_type == "NormalDiag":
@@ -206,7 +208,7 @@ class S4WorldModel(nn.Module):
 
         x = self.statistic_heads[statistics_head](x)
         mean, std = jnp.split(x, 2, -1)
-        std = jnp.exp(std)
+        std = 2 * jax.nn.sigmoid(std / 2) + 0.1
         return {"mean": mean, "std": std}
 
     def __call__(
