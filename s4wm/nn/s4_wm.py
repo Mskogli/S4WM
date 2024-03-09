@@ -40,7 +40,7 @@ class S4WorldModel(nn.Module):
 
     discrete_latent_state: bool = False
     training: bool = True
-    seed: int = 43
+    seed: int = 47
 
     use_with_torch: bool = False
     rnn_mode: bool = False
@@ -195,7 +195,7 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 90, 160)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -206,7 +206,7 @@ class S4WorldModel(nn.Module):
 
         x = self.statistic_heads[statistics_head](x)
         mean, std = jnp.split(x, 2, -1)
-        std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+        std = jnp.exp(std)
         return {"mean": mean, "std": std}
 
     def __call__(
@@ -245,9 +245,6 @@ class S4WorldModel(nn.Module):
             self.get_latent_prior_from_hidden(out["hidden"])
         )
 
-        print(out["z_prior"]["sample"][0, 40, :10])
-        print(out["z_posterior"]["dist"].mean()[0, 40, :10])
-
         if compute_reconstructions:
             # Reconstruct depth images by decoding the hidden and latent posterior states
 
@@ -256,9 +253,9 @@ class S4WorldModel(nn.Module):
             )
 
             # Predict depth images by decoding the hidden and latent prior states
-            out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["dist"].mean()
-            )
+            # out["depth"]["pred"] = self.reconstruct_depth(
+            #     out["hidden"], out["z_prior"]["dist"].mean()
+            # )
 
         return out
 

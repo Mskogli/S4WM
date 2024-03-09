@@ -49,7 +49,7 @@ def create_depth_dataset(
     print("[*] Creating Dataset and Generating Dataloaders")
 
     dataset = DepthImageDataset(
-        "/home/mathias/dev/quad_depth_imgs_2",
+        "/home/mathias/dev/datasets/quad_depth_imgs",
         "cuda:0",
         actions=True,
     )

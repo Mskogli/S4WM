@@ -28,7 +28,7 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=cont/checkpoint_65"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=cont/checkpoint_66"
     )["params"]
 
     model.init(jax.random.PRNGKey(0), init_depth, init_actions)
@@ -39,12 +39,10 @@ def main(cfg: DictConfig) -> None:
 
     pred_depth = out["depth"]["pred"].mean()
     recon_depth = out["depth"]["recon"].mean()
-    for i in range(10):
-        plt.imsave(f"imgs/pred_{i}.png", pred_depth[1, i + 60, :].reshape(270, 480))
-        plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i + 60, :].reshape(270, 480))
-        plt.imsave(
-            f"imgs/label_{i}.png", test_depth_imgs[1, i + 60, :].reshape(270, 480)
-        )
+    for i in range(75):
+        plt.imsave(f"imgs/pred_{i}.png", pred_depth[1, i, :].reshape(270, 480))
+        plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i, :].reshape(270, 480))
+        plt.imsave(f"imgs/label_{i}.png", test_depth_imgs[1, i, :].reshape(270, 480))
 
 
 if __name__ == "__main__":
