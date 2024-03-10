@@ -367,36 +367,28 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate((context_posteriors, context_actions), axis=-1)
         )
-        last_hidden = self.PSSM_blocks(g)[:, -1, :]
-        last_prior, _ = self.get_latent_prior_from_hidden(last_hidden).mean()
-        return last_prior, last_hidden
+        hidden = self.PSSM_blocks(g)[:, -1, :]
+        _, prior_dist = self.get_latent_prior_from_hidden(hidden)
+        return prior_dist.mean(), hidden
 
     def _open_loop_prediction(
-        self, prev_prior: jnp.ndarray, next_action: jnp.ndarray
+        self, predicted_posterior: jnp.ndarray, next_action: jnp.ndarray
     ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
         g = self.input_head(
             jnp.concatenate(
                 (
-                    prev_prior.reshape((-1, 1, self.latent_dim)),
+                    predicted_posterior.reshape((-1, 1, self.latent_dim)),
                     next_action.reshape((-1, 1, self.num_actions)),
                 ),
                 axis=-1,
             )
         )
         hidden = self.PSSM_blocks(g)
-        next_prior, _ = self.get_latent_prior_from_hidden(hidden).mean()
+        prior, _ = self.get_latent_prior_from_hidden(hidden)
+        return prior.mean(), (hidden, prior.mean())
 
-        return next_prior, hidden
-
-    def _decode_predictions(
-        self, hiddens: jnp.ndarray, priors: jnp.ndarray
-    ) -> jnp.ndarray:
-        hiddens = jnp.array(hiddens)
-        priors = jnp.array(priors)
-
-        hiddens = jnp.reshape(hiddens, (-1, len(hiddens), self.latent_dim))
-        priors = jnp.reshape(priors, (-1, len(priors), self.latent_dim))
-        img_post = self.reconstruct_depth(hiddens, priors)
+    def _decode_predictions(self, x: jnp.ndarray) -> jnp.ndarray:
+        img_post = self.reconstruct_depth(x[1], x[0])
         return img_post.mean()
 
     def dream(
@@ -404,17 +396,17 @@ class S4WorldModel(nn.Module):
         context_imgs: jnp.ndarray,
         context_actions: jnp.ndarray,
         dream_actions: jnp.ndarray,
-        dream_length: int = 10,
-        viz: bool = False,
-    ) -> jnp.ndarray:
+        dream_horizon: int = 10,
+    ) -> Tuple[jnp.ndarray, ...]:  # 3 Tuple
 
-        last_prior, last_hidden = self._build_context(context_imgs, context_actions)
-        priors, hiddens = [last_prior], [last_hidden]
+        prior, hidden = self._build_context(context_imgs, context_actions)
+        _, priors_and_hiddens = jax.lax.scan(
+            self._open_loop_prediction, prior, dream_actions, dream_horizon
+        )
+        priors_and_hiddens = jnp.insert(priors_and_hiddens, (prior, hidden), axis=0)
+        pred_depth = jax.lax.map(self._decode_predictions(), priors_and_hiddens)
 
-        for i in range(dream_length):
-            pass
-
-        return
+        return priors_and_hiddens[0], priors_and_hiddens[1], pred_depth
 
 
 if __name__ == "__main__":
