@@ -155,18 +155,16 @@ class S4WorldModel(nn.Module):
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
         if clip:
-            dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
-            representation_loss = jnp.maximum(representation_loss, 1.0)
+            dynamics_loss = jnp.maximum(dynamics_loss, 3.0)
+            representation_loss = jnp.maximum(representation_loss, 3.0)
 
-        kl_loss = (
-            self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
-        ) / self.latent_dim
+        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
+        beta_kl = (self.beta_kl * self.latent_dim) / (270 * 480)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
-
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
-        return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
+        return self.beta_rec * reconstruction_loss + beta_kl * kl_loss
 
     def get_distribution_from_statistics(
         self,
@@ -247,6 +245,9 @@ class S4WorldModel(nn.Module):
             self.get_latent_prior_from_hidden(out["hidden"])
         )
 
+        print(out["z_posterior"]["dist"].mean()[0, 30, :10])
+        print(out["z_prior"]["dist"].mean()[0, 30, :10])
+
         if compute_reconstructions:
             # Reconstruct depth images by decoding the hidden and latent posterior states
 
@@ -255,9 +256,9 @@ class S4WorldModel(nn.Module):
             )
 
             # Predict depth images by decoding the hidden and latent prior states
-            # out["depth"]["pred"] = self.reconstruct_depth(
-            #     out["hidden"], out["z_prior"]["dist"].mean()
-            # )
+            out["depth"]["pred"] = self.reconstruct_depth(
+                out["hidden"], out["z_prior"]["dist"].mean()
+            )
 
         return out
 
@@ -302,7 +303,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
+                out["hidden"], out["z_prior"]["dist"].mean()
             )
 
         return out

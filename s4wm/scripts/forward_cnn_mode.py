@@ -17,6 +17,7 @@ from s4wm.utils.dlpack import from_torch_to_jax
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
+    torch.manual_seed(2)
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
     _, trainloader = create_depth_dataset(batch_size=2)
     test_depth_imgs, test_actions, _ = next(iter(trainloader))
@@ -28,7 +29,7 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=cont/checkpoint_66"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=1e-05-bsz=2-latent_type=cont/checkpoint_30"
     )["params"]
 
     model.init(jax.random.PRNGKey(0), init_depth, init_actions)
