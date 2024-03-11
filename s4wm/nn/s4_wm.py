@@ -182,7 +182,6 @@ class S4WorldModel(nn.Module):
         elif dist_type == "NormalDiag":
             mean = statistics["mean"].astype(f32)
             std = statistics["std"].astype(f32)
-            print(std)
             return tfd.MultivariateNormalDiag(mean, std)
         else:
             raise (NotImplementedError)
@@ -246,9 +245,6 @@ class S4WorldModel(nn.Module):
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"])
         )
-
-        print(out["z_posterior"]["dist"].mean()[0, 30, :10])
-        print(out["z_prior"]["dist"].mean()[0, 30, :10])
 
         if compute_reconstructions:
             # Reconstruct depth images by decoding the hidden and latent posterior states
@@ -365,9 +361,9 @@ class S4WorldModel(nn.Module):
     def _build_context(
         self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
     ) -> None:
-        context_posteriors, _ = self.get_latent_posteriors_from_images(context_imgs)
+        _, posterior_dist = self.get_latent_posteriors_from_images(context_imgs)
         g = self.input_head(
-            jnp.concatenate((context_posteriors, context_actions), axis=-1)
+            jnp.concatenate((posterior_dist.mean(), context_actions), axis=-1)
         )
         hidden = self.PSSM_blocks(g)[:, -1, :]
         _, prior_dist = self.get_latent_prior_from_hidden(hidden)
@@ -386,11 +382,13 @@ class S4WorldModel(nn.Module):
             )
         )
         hidden = self.PSSM_blocks(g)
-        prior, _ = self.get_latent_prior_from_hidden(hidden)
-        return prior.mean(), (hidden, prior.mean())
+        _, prior = self.get_latent_prior_from_hidden(hidden)
+        return prior.mean(), hidden
 
-    def _decode_predictions(self, x: jnp.ndarray) -> jnp.ndarray:
-        img_post = self.reconstruct_depth(x[1], x[0])
+    def _decode_predictions(
+        self, hidden: jnp.ndarray, prior: jnp.ndarray
+    ) -> jnp.ndarray:
+        img_post = self.reconstruct_depth(hidden, prior)
         return img_post.mean()
 
     def dream(
@@ -402,13 +400,25 @@ class S4WorldModel(nn.Module):
     ) -> Tuple[jnp.ndarray, ...]:  # 3 Tuple
 
         prior, hidden = self._build_context(context_imgs, context_actions)
-        _, priors_and_hiddens = jax.lax.scan(
-            self._open_loop_prediction, prior, dream_actions, dream_horizon
-        )
-        priors_and_hiddens = jnp.insert(priors_and_hiddens, (prior, hidden), axis=0)
-        pred_depth = jax.lax.map(self._decode_predictions(), priors_and_hiddens)
+        priors = [prior]
+        hiddens = [hidden]
+        pred_depths = []
 
-        return priors_and_hiddens[0], priors_and_hiddens[1], pred_depth
+        for i in range(dream_horizon):
+            prior, hidden = self._open_loop_prediction(
+                predicted_posterior=prior, next_action=dream_actions[:, i]
+            )
+            priors.append(prior)
+            hiddens.append(hidden)
+
+        for x in zip(hiddens, priors):
+            print(x[0].shape, x[1].shape)
+            pred_depth = self._decode_predictions(
+                jnp.expand_dims(x[0], axis=1), jnp.expand_dims(x[1], axis=1)
+            )
+            pred_depths.append(pred_depth)
+
+        return pred_depths, priors
 
 
 if __name__ == "__main__":

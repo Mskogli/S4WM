@@ -57,7 +57,6 @@ def main(cfg: DictConfig) -> None:
 
     cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
 
-    print("Initited")
     for i in range(74):
         out, variables = _jitted_forward(
             model,
@@ -68,16 +67,6 @@ def main(cfg: DictConfig) -> None:
             from_torch_to_jax(test_actions),
         )
         cache = variables["cache"]
-        print(i)
-
-    # pred_depth = out["depth"]["pred"].mean()
-    # recon_depth = out["depth"]["recon"].mean()
-    # for i in range(10):
-    #     plt.imsave(f"imgs/pred_rnn_{i}.png", pred_depth[1, i + 64, :].reshape(270, 480))
-    #     plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i + 64, :].reshape(270, 480))
-    #     plt.imsave(
-    #         f"imgs/label_{i}.png", test_depth_imgs[1, i + 64, :].reshape(270, 480)
-    #     )
 
 
 if __name__ == "__main__":
