@@ -4,6 +4,7 @@ import jax
 import jax.numpy as np
 import optax
 import shutil
+import torch
 
 from functools import partial
 from flax.training import checkpoints, train_state
@@ -210,6 +211,7 @@ def train(
 
     key = jax.random.PRNGKey(seed)
     key, rng, train_rng = jax.random.split(key, num=3)
+    torch.manual_seed(0)  # For torch dataloader order
 
     # Create dataset and data loaders
     create_dataloaders_fn = Dataloaders[dataset]
