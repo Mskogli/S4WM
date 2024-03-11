@@ -3,7 +3,7 @@ layer: s4
 seed: 5
 
 wm:
-  latent_dim: 1024
+  latent_dim: 512
   num_actions: 4
   alpha: 0.8
   beta_rec: 1.0
@@ -22,8 +22,8 @@ model:
 train:
   epochs: 200
   bsz: 2
-  lr: 0.00003
-  lr_schedule: false
+  lr: 0.0001
+  lr_schedule: true
   weight_decay: 0.05
   checkpoint: true
 
