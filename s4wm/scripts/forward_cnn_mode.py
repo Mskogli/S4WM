@@ -2,7 +2,6 @@ import jax
 import hydra
 import os
 import torch
-import numpy
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -28,9 +27,10 @@ def main(cfg: DictConfig) -> None:
     init_depth = jnp.zeros_like(test_depth_imgs)
     init_actions = jnp.zeros_like(test_actions)
 
-    params = model.restore_checkpoint_state(
+    state = model.restore_checkpoint_state(
         "/home/mathias/dev/structured-state-space-wm/s4wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97"
-    )["params"]
+    )
+    params = state["params"]
 
     model.init(jax.random.PRNGKey(0), init_depth, init_actions)
 

@@ -3,6 +3,7 @@ import hydra
 import jax
 import jax.numpy as np
 import optax
+import shutil
 
 from functools import partial
 from flax.training import checkpoints, train_state
@@ -200,7 +201,6 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
 def train(
     dataset: str,
-    layer: str,
     seed: int,
     wm: DictConfig,
     model: DictConfig,
@@ -257,15 +257,19 @@ def train(
         print(f"\tVal Loss: {val_loss:.5f} -- Train Loss:")
 
         if val_loss < best_loss:
-            best_loss, best_epoch = val_loss, epoch
 
             run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
-            _ = checkpoints.save_checkpoint(
+            ckpt_path = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
+            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
+            if os.path.exists(f"{run_id}/best_{best_epoch}"):
+                os.remove(f"{run_id}/best_{best_epoch}")
+
+            best_loss, best_epoch = val_loss, epoch
 
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
