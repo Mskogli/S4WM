@@ -75,7 +75,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(500), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(1000), optax.adam(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -285,7 +285,6 @@ def train(
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
-    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
 
     print(OmegaConf.to_yaml(cfg))
 

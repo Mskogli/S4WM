@@ -55,7 +55,9 @@ class S4WorldModel(nn.Module):
         self.num_classes = (
             jnp.sqrt(self.latent_dim) if self.discrete_latent_state else None
         )
-        self.rng = jax.random.PRNGKey(self.seed)
+        self.rng_post, self.rng_prior = jax.random.split(
+            jax.random.PRNGKey(self.seed), num=2
+        )
 
         self.encoder = ImageEncoder(
             latent_dim=(
@@ -101,7 +103,7 @@ class S4WorldModel(nn.Module):
         z_posterior_dist = self.get_distribution_from_statistics(
             statistics=posterior_statistics, dist_type=dist_type
         )
-        z_posterior = z_posterior_dist.sample(seed=self.rng)
+        z_posterior = z_posterior_dist.sample(seed=self.rng_post)
         batch_size, seq_length = image.shape[:2]
         z_posterior = (
             z_posterior.reshape(batch_size, seq_length, self.latent_dim)
@@ -122,7 +124,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist = self.get_distribution_from_statistics(
             statistics=statistics, dist_type=dist_type
         )
-        z_prior = z_prior_dist.sample(seed=self.rng)
+        z_prior = z_prior_dist.sample(seed=self.rng_prior)
         batch_size, seq_length = hidden.shape[:2]
         z_prior = (
             z_prior.reshape(batch_size, seq_length, self.latent_dim)
@@ -146,7 +148,7 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        clip: bool = False,
+        clip: bool = True,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
@@ -155,16 +157,15 @@ class S4WorldModel(nn.Module):
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
         if clip:
-            dynamics_loss = jnp.maximum(dynamics_loss, 3.0)
-            representation_loss = jnp.maximum(representation_loss, 3.0)
+            dynamics_loss = jnp.maximum(dynamics_loss, 2.0)
+            representation_loss = jnp.maximum(representation_loss, 2.0)
 
-        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
+        kl_loss = 0.5 * dynamics_loss + 0.1 * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
-        beta_kl = (self.beta_kl * self.latent_dim) / (270 * 480)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
-        return self.beta_rec * reconstruction_loss + beta_kl * kl_loss
+        return self.beta_rec * reconstruction_loss + kl_loss
 
     def get_distribution_from_statistics(
         self,
@@ -175,12 +176,13 @@ class S4WorldModel(nn.Module):
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
             ).astype(f32)
-            return MSEDist(mean, 1, agg="mean")
+            return MSEDist(mean, 1)
         elif dist_type == "OneHot":
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
         elif dist_type == "NormalDiag":
             mean = statistics["mean"].astype(f32)
             std = statistics["std"].astype(f32)
+            print(std)
             return tfd.MultivariateNormalDiag(mean, std)
         else:
             raise (NotImplementedError)
