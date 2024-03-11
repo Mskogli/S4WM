@@ -5,3 +5,6 @@ wandb/
 imgs/
 *.egg-info/
 wandb/
+nn/wandb/
+nn/outputs/
+nn/checkpoints/

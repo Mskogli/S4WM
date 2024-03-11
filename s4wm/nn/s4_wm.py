@@ -40,7 +40,7 @@ class S4WorldModel(nn.Module):
 
     discrete_latent_state: bool = False
     training: bool = True
-    seed: int = 43
+    seed: int = 47
 
     use_with_torch: bool = False
     rnn_mode: bool = False
@@ -55,7 +55,9 @@ class S4WorldModel(nn.Module):
         self.num_classes = (
             jnp.sqrt(self.latent_dim) if self.discrete_latent_state else None
         )
-        self.rng = jax.random.PRNGKey(self.seed)
+        self.rng_post, self.rng_prior = jax.random.split(
+            jax.random.PRNGKey(self.seed), num=2
+        )
 
         self.encoder = ImageEncoder(
             latent_dim=(
@@ -85,7 +87,7 @@ class S4WorldModel(nn.Module):
             ),
         }
 
-        self.input_head = nn.Dense(features=self.latent_dim)
+        self.input_head = nn.Dense(features=self.S4_config["d_model"])
 
     def get_latent_posteriors_from_images(
         self, image: jnp.ndarray
@@ -101,7 +103,7 @@ class S4WorldModel(nn.Module):
         z_posterior_dist = self.get_distribution_from_statistics(
             statistics=posterior_statistics, dist_type=dist_type
         )
-        z_posterior = z_posterior_dist.sample(seed=self.rng)
+        z_posterior = z_posterior_dist.sample(seed=self.rng_post)
         batch_size, seq_length = image.shape[:2]
         z_posterior = (
             z_posterior.reshape(batch_size, seq_length, self.latent_dim)
@@ -122,7 +124,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist = self.get_distribution_from_statistics(
             statistics=statistics, dist_type=dist_type
         )
-        z_prior = z_prior_dist.sample(seed=self.rng)
+        z_prior = z_prior_dist.sample(seed=self.rng_prior)
         batch_size, seq_length = hidden.shape[:2]
         z_prior = (
             z_prior.reshape(batch_size, seq_length, self.latent_dim)
@@ -146,30 +148,24 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        clip: bool = False,
+        clip: bool = True,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
 
-        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist) / (
-            self.latent_dim
-        )
-        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist)) / (
-            self.latent_dim
-        )
+        dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
+        representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
         if clip:
-            dynamics_loss = jnp.maximum(dynamics_loss, 1.0)
-            representation_loss = jnp.maximum(representation_loss)
+            dynamics_loss = jnp.maximum(dynamics_loss, 2.0)
+            representation_loss = jnp.maximum(representation_loss, 2.0)
 
-        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
+        kl_loss = 0.5 * dynamics_loss + 0.1 * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
-        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32)) / (
-            270 * 480
-        )
+        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
-        return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
+        return self.beta_rec * reconstruction_loss + kl_loss
 
     def get_distribution_from_statistics(
         self,
@@ -200,7 +196,7 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 90, 160)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -244,6 +240,7 @@ class S4WorldModel(nn.Module):
             )
         )
         out["hidden"] = self.PSSM_blocks(g)
+
         # Compute the latent prior distributions from the hidden state
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"])
@@ -258,7 +255,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
+                out["hidden"], out["z_prior"]["dist"].mean()
             )
 
         return out
@@ -291,9 +288,9 @@ class S4WorldModel(nn.Module):
         )
         out["hidden"] = self.PSSM_blocks(g)
         # Compute the latent prior distributions from the hidden state
-        # out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-        #     self.get_latent_prior_from_hidden(out["hidden"])
-        # )
+        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
+            self.get_latent_prior_from_hidden(out["hidden"])
+        )
 
         if compute_recon:
             # Reconstruct depth images by decoding the hidden and latent posterior states
@@ -304,7 +301,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
+                out["hidden"], out["z_prior"]["dist"].mean()
             )
 
         return out
@@ -349,10 +346,8 @@ class S4WorldModel(nn.Module):
         assert not self.rnn_mode
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
 
-    def forward_CNN_mode(
-        self, params, imgs, actions, compute_reconstructions: bool = False
-    ):
-        return self.apply({"params": params}, actions, imgs, compute_reconstructions)
+    def forward_CNN_mode(self, imgs, actions, compute_reconstructions: bool = False):
+        return self._call_(actions, imgs, compute_reconstructions)
 
     def restore_checkpoint_state(self, ckpt_dir: str) -> dict:
         ckptr = orbax.checkpoint.Checkpointer(
@@ -366,95 +361,64 @@ class S4WorldModel(nn.Module):
     def _build_context(
         self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
     ) -> None:
-        context_posteriors, _ = self.get_latent_posteriors_from_images(context_imgs)
+        _, posterior_dist = self.get_latent_posteriors_from_images(context_imgs)
         g = self.input_head(
-            jnp.concatenate((context_posteriors, context_actions), axis=-1)
+            jnp.concatenate((posterior_dist.mean(), context_actions), axis=-1)
         )
-        context_hiddens = self.PSSM_blocks(g)
-
-        last_prior = self.get_latent_prior_from_hidden(context_hiddens).mean()[:, -1, :]
-        return last_prior, context_hiddens[:, -1, :]
+        hidden = self.PSSM_blocks(g)[:, -1, :]
+        _, prior_dist = self.get_latent_prior_from_hidden(hidden)
+        return prior_dist.mean(), hidden
 
     def _open_loop_prediction(
-        self, prev_prior: jnp.ndarray, next_action: jnp.ndarray
+        self, predicted_posterior: jnp.ndarray, next_action: jnp.ndarray
     ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
         g = self.input_head(
             jnp.concatenate(
                 (
-                    prev_prior.reshape((-1, 1, self.latent_dim)),
+                    predicted_posterior.reshape((-1, 1, self.latent_dim)),
                     next_action.reshape((-1, 1, self.num_actions)),
                 ),
                 axis=-1,
             )
         )
         hidden = self.PSSM_blocks(g)
-        next_prior = self.get_latent_prior_from_hidden(hidden).mean()
-        return next_prior, hidden
+        _, prior = self.get_latent_prior_from_hidden(hidden)
+        return prior.mean(), hidden
 
     def _decode_predictions(
-        self, hiddens: jnp.ndarray, priors: jnp.ndarray
+        self, hidden: jnp.ndarray, prior: jnp.ndarray
     ) -> jnp.ndarray:
-        hiddens = jnp.array(hiddens)
-        priors = jnp.array(priors)
-
-        hiddens = jnp.reshape(hiddens, (-1, len(hiddens), self.latent_dim))
-        priors = jnp.reshape(priors, (-1, len(priors), self.latent_dim))
-        img_post = self.reconstruct_depth(hiddens, priors)
+        img_post = self.reconstruct_depth(hidden, prior)
         return img_post.mean()
 
     def dream(
         self,
-        params: dict,
         context_imgs: jnp.ndarray,
         context_actions: jnp.ndarray,
         dream_actions: jnp.ndarray,
-        dream_length: int = 10,
-        viz: bool = False,
-    ) -> jnp.ndarray:
-        context_imgs = jax.lax.stop_gradient(context_imgs)
-        context_actions = jax.lax.stop_gradient(context_actions)
-        dream_actions = jax.lax.stop_gradient(dream_actions)
+        dream_horizon: int = 10,
+    ) -> Tuple[jnp.ndarray, ...]:  # 3 Tuple
 
-        self._init_RNN_mode(
-            params,
-            (jax.random.PRNGKey(0), jax.random.PRNGKey(1)),
-            jnp.zeros_like(context_imgs),
-            jnp.zeros_like(context_actions),
-        )
+        prior, hidden = self._build_context(context_imgs, context_actions)
+        priors = [prior]
+        hiddens = [hidden]
+        pred_depths = []
 
-        # Feed the model environment context
-        (_, _, _, preds), vars = self.apply(
-            {
-                "params": params,
-                "prime": self.S4_vars["matrices"],
-                "cache": self.S4_vars["hidden"],
-            },
-            context_imgs,
-            context_actions,
-            mutable=["cache"],
-        )
-        self.S4_vars["hidden"] = vars["cache"]
+        for i in range(dream_horizon):
+            prior, hidden = self._open_loop_prediction(
+                predicted_posterior=prior, next_action=dream_actions[:, i]
+            )
+            priors.append(prior)
+            hiddens.append(hidden)
 
-        # priors = [jnp.expand_dims(last_prior, axis=1)]
-        # hiddens = [jnp.expand_dims(last_hidden, axis=1)]
+        for x in zip(hiddens, priors):
+            print(x[0].shape, x[1].shape)
+            pred_depth = self._decode_predictions(
+                jnp.expand_dims(x[0], axis=1), jnp.expand_dims(x[1], axis=1)
+            )
+            pred_depths.append(pred_depth)
 
-        # for i in range(dream_length):
-        #     (last_prior, last_hidden), vars = self.apply(
-        #         {
-        #             "params": params,
-        #             "prime": self.S4_vars["matrices"],
-        #             "cache": self.S4_vars["hidden"],
-        #         },
-        #         last_prior,
-        #         dream_actions[:, i],
-        #         mutable=["cache"],
-        #         method="_open_loop_prediction",
-        #     )
-        #     self.S4_vars["hidden"] = vars["cache"]
-        #     priors.append(last_prior)
-        #     hiddens.append(last_hidden)
-
-        return preds
+        return pred_depths, priors
 
 
 if __name__ == "__main__":

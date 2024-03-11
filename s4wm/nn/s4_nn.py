@@ -42,9 +42,6 @@ class StackedPSSMBlocks(nn.Module):
         ]
 
     def __call__(self, x: jnp.ndarray) -> None:
-        x = self.dense(x)
-        x = nn.gelu(x)
-
         for block in self.blocks:
             x = block(x)
         return x
@@ -153,8 +150,6 @@ class S4Layer(nn.Module):
         self.Lambda_re = self.param("Lambda_re", init_A_re, (self.N,))
         self.Lambda_im = self.param("Lambda_im", init_A_im, (self.N,))
 
-        # Ensure the real part of Lambda is negative
-        # (described in the SaShiMi follow-up to S4)
         self.Lambda = jnp.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im
         self.P = self.param("P", init_P, (self.N,))
         self.B = self.param("B", init_B, (self.N,))

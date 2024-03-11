@@ -3,6 +3,8 @@ import hydra
 import jax
 import jax.numpy as np
 import optax
+import shutil
+import torch
 
 from functools import partial
 from flax.training import checkpoints, train_state
@@ -12,6 +14,7 @@ from tqdm import tqdm
 from s4wm.nn.s4_wm import S4WorldModel
 from s4wm.nn.s4_nn import S4Layer
 from s4wm.data.dataloaders import Dataloaders
+from s4wm.utils.dlpack import from_torch_to_jax
 
 try:
     # Slightly nonstandard import name to make config easier - see example_train()
@@ -47,8 +50,10 @@ def create_train_state(
     model = model_cls(training=True)
     init_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    init_depth, init_actions = next(iter(trainloader))
-    init_depth = np.expand_dims(init_depth, axis=-1)
+    init_depth, init_actions, _ = next(iter(trainloader))
+    init_depth, init_actions = from_torch_to_jax(init_depth), from_torch_to_jax(
+        init_actions
+    )
 
     params = model.init(
         {"params": init_rng, "dropout": dropout_rng},
@@ -109,19 +114,15 @@ def train_epoch(state, rng, model_cls, trainloader):
     model = model_cls(training=True)
     batch_losses = []
 
-    for batch_depth, batch_actions in tqdm(trainloader):
+    for batch_depth, batch_actions, batch_labels in tqdm(trainloader):
         rng, drop_rng = jax.random.split(rng)
-        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
-            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
-        )
-        batch_depth = np.expand_dims(batch_depth, axis=-1)
 
         state, loss = train_step(
             state,
             drop_rng,
-            batch_depth,
-            batch_actions,
-            batch_depth_labels,
+            from_torch_to_jax(batch_depth),
+            from_torch_to_jax(batch_actions),
+            from_torch_to_jax(batch_labels),
             model,
         )
         batch_losses.append(loss)
@@ -136,16 +137,12 @@ def validate(params, model_cls, testloader):
     losses = []
     model = model_cls(training=False)
 
-    for batch_depth, batch_actions in tqdm(testloader):
-        batch_depth_labels = batch_depth[:, 1:, ...].reshape(
-            batch_depth.shape[0], batch_depth.shape[1] - 1, -1
-        )
-        batch_depth = np.expand_dims(batch_depth, axis=-1)
+    for batch_depth, batch_actions, batch_labels in tqdm(testloader):
 
         loss = eval_step(
-            batch_depth,
-            batch_actions,
-            batch_depth_labels,
+            from_torch_to_jax(batch_depth),
+            from_torch_to_jax(batch_actions),
+            from_torch_to_jax(batch_labels),
             params,
             model,
         )
@@ -157,6 +154,7 @@ def validate(params, model_cls, testloader):
 @partial(jax.jit, static_argnums=5)
 def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
 
+    @jax.jit
     def loss_fn(params):
 
         out = model.apply(
@@ -165,8 +163,7 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
             batch_actions,
             compute_reconstructions=True,
             rngs={"dropout": rng},
-            mutable=["intermediates"],
-        )[0]
+        )
 
         loss = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
@@ -205,7 +202,6 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
 
 def train(
     dataset: str,
-    layer: str,
     seed: int,
     wm: DictConfig,
     model: DictConfig,
@@ -215,6 +211,7 @@ def train(
 
     key = jax.random.PRNGKey(seed)
     key, rng, train_rng = jax.random.split(key, num=3)
+    torch.manual_seed(0)  # For torch dataloader order
 
     # Create dataset and data loaders
     create_dataloaders_fn = Dataloaders[dataset]
@@ -262,15 +259,19 @@ def train(
         print(f"\tVal Loss: {val_loss:.5f} -- Train Loss:")
 
         if val_loss < best_loss:
-            best_loss, best_epoch = val_loss, epoch
 
             run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
-            _ = checkpoints.save_checkpoint(
+            ckpt_path = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
+            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
+            if os.path.exists(f"{run_id}/best_{best_epoch}"):
+                os.remove(f"{run_id}/best_{best_epoch}")
+
+            best_loss, best_epoch = val_loss, epoch
 
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
@@ -289,8 +290,7 @@ def train(
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-    # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
 
     print(OmegaConf.to_yaml(cfg))
 

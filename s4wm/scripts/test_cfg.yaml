@@ -14,7 +14,7 @@ model:
   d_model: 1024
   n_layers: 2
   n_blocks: 4
-  dropout: 0.00
+  dropout: 0.1
   layer:
     l_max: 74
     N: 128
@@ -22,9 +22,9 @@ model:
 train:
   epochs: 200
   bsz: 2
-  lr: 0.0001
-  lr_schedule: true
-  weight_decay: 0.00
+  lr: 0.00003
+  lr_schedule: false
+  weight_decay: 0.05
   checkpoint: true
 
 wandb:

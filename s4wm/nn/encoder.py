@@ -9,7 +9,7 @@ class ImageEncoder(nn.Module):
     latent_dim: int
     seq_len: int = 150
     act: str = "elu"
-    process_in_chunks: bool = True
+    process_in_chunks: bool = False
 
     def setup(self) -> None:
 

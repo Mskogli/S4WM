@@ -14,7 +14,6 @@ def log_step_initializer(dt_min: float = 0.001, dt_max: float = 0.1) -> Callable
     return init
 
 
-@jax.jit
 def scan_SSM(
     Ab: jnp.ndarray, Bb: jnp.ndarray, Cb: jnp.ndarray, u: jnp.ndarray, x0: jnp.ndarray
 ) -> jnp.ndarray:
@@ -42,7 +41,6 @@ def make_HiPPO(N: jnp.ndarray) -> jnp.ndarray:
     return -A
 
 
-@jax.jit
 def cauchy(v: jnp.ndarray, omega: jnp.ndarray, lambd: jnp.ndarray) -> jnp.ndarray:
     """Cauchy matrix multiplication: (n), (l), (n) -> (l)"""
     cauchy_dot = lambda _omega: (v / (_omega - lambd)).sum()
