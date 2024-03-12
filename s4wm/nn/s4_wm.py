@@ -32,6 +32,7 @@ class S4WorldModel(nn.Module):
 
     latent_dim: int = 128
     hidden_dim: int = 512
+    img_dim: int = 129600
     num_actions: int = 4
 
     alpha: float = 0.8
@@ -50,6 +51,8 @@ class S4WorldModel(nn.Module):
         "hidden": None,  # x_k-1
         "matrcies": None,  # discrete time state space matrices
     }
+
+    image_dist_type = "MSE"
 
     def setup(self) -> None:
         self.num_classes = (
@@ -138,7 +141,7 @@ class S4WorldModel(nn.Module):
     ) -> tfd.Distribution:
         x = self.decoder(jnp.concatenate((hidden, z_posterior), axis=-1))
         img_prior_dists = self.get_distribution_from_statistics(
-            statistics=x, dist_type="MSE"
+            statistics=x, dist_type="Image"
         )
         return img_prior_dists
 
@@ -157,26 +160,33 @@ class S4WorldModel(nn.Module):
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
         if clip:
-            dynamics_loss = jnp.maximum(dynamics_loss, 2.0)
-            representation_loss = jnp.maximum(representation_loss, 2.0)
+            dynamics_loss = jnp.maximum(dynamics_loss, 2)
+            representation_loss = jnp.maximum(representation_loss, 2)
 
-        kl_loss = 0.5 * dynamics_loss + 0.1 * representation_loss
+        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
         kl_loss = jnp.sum(kl_loss, axis=-1)
 
         reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
         reconstruction_loss = jnp.sum(reconstruction_loss, axis=-1)
-        return self.beta_rec * reconstruction_loss + kl_loss
+        reconstruction_loss = (self.latent_dim / (self.img_dim)) * reconstruction_loss
+
+        return self.beta_rec * reconstruction_loss + self.beta_kl * kl_loss
 
     def get_distribution_from_statistics(
         self,
         statistics: Union[Dict[str, jnp.ndarray], jnp.ndarray],
         dist_type: str,
     ) -> tfd.Distribution:
-        if dist_type == "MSE":
+        if dist_type == "Image":
             mean = statistics.reshape(
                 statistics.shape[0], statistics.shape[1], -1
             ).astype(f32)
-            return MSEDist(mean, 1)
+            img_dist = (
+                MSEDist(mean, 1)
+                if self.image_dist_type == "MSE"
+                else tfd.Independent(tfd.Normal(mean, 1), 3)
+            )
+            return img_dist
         elif dist_type == "OneHot":
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
         elif dist_type == "NormalDiag":
@@ -208,6 +218,7 @@ class S4WorldModel(nn.Module):
         x = self.statistic_heads[statistics_head](x)
         mean, std = jnp.split(x, 2, -1)
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+        print(std)
         return {"mean": mean, "std": std}
 
     def __call__(
@@ -255,7 +266,7 @@ class S4WorldModel(nn.Module):
 
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["dist"].mean()
+                out["hidden"], out["z_prior"]["sample"]
             )
 
         return out
@@ -300,9 +311,9 @@ class S4WorldModel(nn.Module):
             )
 
             # Predict depth images by decoding the hidden and latent prior states
-            out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["dist"].mean()
-            )
+            # out["depth"]["pred"] = self.reconstruct_depth(
+            #     out["hidden"], out["z_prior"]["dist"].mean()
+            # )
 
         return out
 

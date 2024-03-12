@@ -261,15 +261,15 @@ def train(
         if val_loss < best_loss:
 
             run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
-            ckpt_path = checkpoints.save_checkpoint(
+            _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
-            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
-            if os.path.exists(f"{run_id}/best_{best_epoch}"):
-                os.remove(f"{run_id}/best_{best_epoch}")
+            # shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
+            # if os.path.exists(f"{run_id}/best_{best_epoch}"):
+            #     os.remove(f"{run_id}/best_{best_epoch}")
 
             best_loss, best_epoch = val_loss, epoch
 
