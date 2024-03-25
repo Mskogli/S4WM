@@ -28,7 +28,7 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=disc/checkpoint_13"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=disc/checkpoint_20"
     )["params"]
     cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
 
@@ -37,7 +37,9 @@ def main(cfg: DictConfig) -> None:
     context_imgs = test_depth_imgs[:, :ctx_l, :]
     context_actions = test_actions[:, 1 : ctx_l + 1, :]
     dream_actions = test_actions[:, ctx_l + 1 : ctx_l + dream_l + 1, :]
-    dream_actions = jnp.zeros_like(context_actions)
+    # dream_actions = jnp.zeros_like(context_actions)
+    # dream_actions = dream_actions.at[:, :, 3].set(1)  # Yaw
+    print(dream_actions)
 
     out, _ = model.apply(
         {"params": params, "cache": cache, "prime": prime},

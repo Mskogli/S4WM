@@ -395,13 +395,13 @@ class S4WorldModel(nn.Module):
         self, context_imgs: jnp.ndarray, context_actions: jnp.ndarray
     ) -> None:
         posterior, _ = self.get_latent_posteriors_from_images(
-            context_imgs, sample_mean=True
+            context_imgs, sample_mean=False
         )
         print(posterior.shape)
         g = self.input_head(jnp.concatenate((posterior, context_actions), axis=-1))
         hidden = jnp.expand_dims(self.PSSM_blocks(g)[:, -1, :], axis=1)
         print(hidden.shape)
-        prior, _ = self.get_latent_prior_from_hidden(hidden, sample_mean=True)
+        prior, _ = self.get_latent_prior_from_hidden(hidden, sample_mean=False)
         return prior, hidden
 
     def _open_loop_prediction(
