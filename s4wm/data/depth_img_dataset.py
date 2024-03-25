@@ -19,7 +19,7 @@ class DepthImageDataset(Dataset):
         self.actions = actions
         self.num_trajs = 3000
         self.max_depth_value = 20
-        self.min_depth_value = 0.1
+        self.min_depth_value = 0.0
 
     def __len__(self) -> int:
         return self.num_trajs

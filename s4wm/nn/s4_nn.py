@@ -98,7 +98,7 @@ class SequenceBlock(nn.Module):
     dropout: float
     d_model: int
     prenorm: bool = True
-    glu: bool = False
+    glu: bool = True
     training: bool = True
     rnn_mode: bool = False
 
@@ -137,11 +137,11 @@ class S4Layer(nn.Module):
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)
     lr = {
-        "Lambda_re": 0.1,
-        "Lambda_im": 0.1,
-        "P": 0.1,
-        "B": 0.1,
-        "log_step": 0.1,
+        "Lambda_re": 1.0,
+        "Lambda_im": 1.0,
+        "P": 1.0,
+        "B": 1.0,
+        "log_step": 1.0,
     }
 
     def setup(self) -> None:
