@@ -32,7 +32,7 @@ class S4WorldModel(nn.Module):
 
     latent_dim: int = 128
     hidden_dim: int = 512
-    img_dim: int = 129600
+    img_dim: int = 32400
     num_actions: int = 4
 
     alpha: float = 0.8
@@ -45,7 +45,7 @@ class S4WorldModel(nn.Module):
 
     use_with_torch: bool = False
     rnn_mode: bool = False
-    process_in_chunks: bool = True
+    process_in_chunks: bool = False
 
     S4_vars = {
         "hidden": None,  # x_k-1
@@ -109,7 +109,7 @@ class S4WorldModel(nn.Module):
         if not sample_mean:
             z_posterior = z_posterior_dist.sample(seed=self.rng_post)
         else:
-            z_posterior = z_posterior_dist.mean()
+            z_posterior = z_posterior_dist.mode()
 
         batch_size, seq_length = image.shape[:2]
         z_posterior = (
@@ -136,7 +136,7 @@ class S4WorldModel(nn.Module):
         if not sample_mean:
             z_prior = z_prior_dist.sample(seed=self.rng_post)
         else:
-            z_prior = z_prior_dist.mean()
+            z_prior = z_prior_dist.mode()
 
         batch_size, seq_length = hidden.shape[:2]
         z_prior = (
@@ -227,7 +227,7 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 64, 64)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)

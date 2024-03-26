@@ -19,7 +19,7 @@ def main(cfg: DictConfig) -> None:
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
     torch.manual_seed(0)
 
-    _, trainloader = create_depth_dataset(batch_size=2)
+    _, trainloader = create_depth_dataset(batch_size=4)
     test_depth_imgs, test_actions, _ = next(iter(trainloader))
 
     test_depth_imgs = from_torch_to_jax(test_depth_imgs)
@@ -29,7 +29,7 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2-latent_type=disc/checkpoint_20"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=4-latent_type=disc/checkpoint_8"
     )
     params = state["params"]
 
@@ -40,15 +40,15 @@ def main(cfg: DictConfig) -> None:
         test_depth_imgs,
         test_actions,
         compute_reconstructions=True,
-        sample_mean=True,
+        sample_mean=False,
     )
 
     pred_depth = out["depth"]["pred"].mean()
     recon_depth = out["depth"]["recon"].mean()
     for i in range(100):
-        plt.imsave(f"imgs/pred_{i}.png", pred_depth[1, i, :].reshape(270, 480))
-        plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i, :].reshape(270, 480))
-        plt.imsave(f"imgs/label_{i}.png", test_depth_imgs[1, i, :].reshape(270, 480))
+        plt.imsave(f"imgs/pred_{i}.png", pred_depth[2, i, :].reshape(135, 240))
+        plt.imsave(f"imgs/recon_{i}.png", recon_depth[2, i, :].reshape(135, 240))
+        plt.imsave(f"imgs/label_{i}.png", test_depth_imgs[2, i, :].reshape(135, 240))
 
 
 if __name__ == "__main__":

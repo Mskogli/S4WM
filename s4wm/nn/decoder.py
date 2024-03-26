@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import os
 
 from jax import random
 from flax import linen as nn
@@ -48,20 +49,21 @@ class ImageDecoder(nn.Module):
         )
         self.deconv_3 = nn.ConvTranspose(
             features=32,
-            kernel_size=(6, 6),
-            strides=(5, 4),
-            padding="SAME",
+            kernel_size=(7, 6),
+            strides=(4, 4),
+            padding=(3, 4),
             kernel_init=glorot_init,
             bias_init=zeros,
         )
         self.deconv_4 = nn.ConvTranspose(
             features=16,
-            kernel_size=(4, 4),
-            strides=(3, 4),
-            padding="SAME",
+            kernel_size=(3, 4),
+            strides=(2, 2),
+            padding=(0, 2),
             kernel_init=glorot_init,
             bias_init=zeros,
         )
+
         self.deconv_5 = nn.ConvTranspose(
             features=1,
             kernel_size=(4, 4),
@@ -108,6 +110,8 @@ class ImageDecoder(nn.Module):
 
 if __name__ == "__main__":
     # Test decoder implementation
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
     key = random.PRNGKey(0)
     decoder = ImageDecoder(latent_dim=128)
 

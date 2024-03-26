@@ -77,7 +77,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(1000), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(500), optax.adamw(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 

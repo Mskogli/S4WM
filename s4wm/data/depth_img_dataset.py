@@ -17,7 +17,7 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 3000
+        self.num_trajs = 30
         self.max_depth_value = 20
         self.min_depth_value = 0.0
 
@@ -33,7 +33,7 @@ class DepthImageDataset(Dataset):
             img_data = dataset[:]
             depth_images.append(
                 torch.from_numpy(img_data)
-                .view(1, 270, 480, 1)
+                .view(1, 135, 240, 1)
                 .to(torch.device(self.device))
             )
             actions.append(
@@ -53,7 +53,7 @@ class DepthImageDataset(Dataset):
         )
 
         acts = torch.cat(actions, dim=0)
-        labels = imgs[1:, :].view(-1, 270 * 480)
+        labels = imgs[1:, :].view(-1, 135 * 240)
 
         return (imgs, acts, labels)
 

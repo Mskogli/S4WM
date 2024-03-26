@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from tensorflow_probability.substrates import jax as tfp
 
-from s4wm.nn.dists import MSEDist
+from s4wm.nn.dists import MSEDist, OneHotDist
 
 tfd = tfp.distributions
 tfm = tfp.math
@@ -17,6 +17,12 @@ if __name__ == "__main__":
 
     mean_kl_1 = jax.random.normal(key, (2, 100, 1024))
     mean_kl_2 = jax.random.normal(key_1, (2, 100, 1024))
+
+    onehot_logits = jax.random.normal(key, (2, 100, 32, 32))
+
+    onehot_dist = OneHotDist(onehot_logits)
+
+    print("sample", onehot_dist.mean())
 
     dist_log_prob_1 = tfd.Independent(tfd.Normal(mean, 1), 1)
     dist_log_prob_2 = tfd.MultivariateNormalDiag(mean_2, jnp.ones_like(mean_2))
