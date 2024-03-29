@@ -19,10 +19,12 @@ if __name__ == "__main__":
     mean_kl_2 = jax.random.normal(key_1, (2, 100, 1024))
 
     onehot_logits = jax.random.normal(key, (2, 100, 32, 32))
+    onehot_logits_2 = jax.random.normal(key_1, (2, 100, 32, 32))
 
-    onehot_dist = OneHotDist(onehot_logits)
+    onehot_dist = tfd.Independent(OneHotDist(onehot_logits), 1)
+    onehot_dist_2 = tfd.Independent(OneHotDist(onehot_logits_2), 1)
 
-    print("sample", onehot_dist.mean())
+    print(jnp.sum(onehot_dist.kl_divergence(onehot_dist_2), axis=-1).shape)
 
     dist_log_prob_1 = tfd.Independent(tfd.Normal(mean, 1), 1)
     dist_log_prob_2 = tfd.MultivariateNormalDiag(mean_2, jnp.ones_like(mean_2))
@@ -31,6 +33,7 @@ if __name__ == "__main__":
     dist_kl_2 = tfd.MultivariateNormalDiag(mean_kl_1, jnp.ones_like(mean_kl_1) + 0.5)
 
     kl_div = jnp.sum(dist_kl_1.kl_divergence(dist_kl_2) / 1024, axis=-1)
+    print(kl_div.shape)
 
     img_dist = MSEDist(mean, 1, agg="mean")
     log_cosh_loss = jnp.sum(

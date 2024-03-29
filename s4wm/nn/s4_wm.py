@@ -45,12 +45,7 @@ class S4WorldModel(nn.Module):
 
     use_with_torch: bool = False
     rnn_mode: bool = False
-    process_in_chunks: bool = False
-
-    S4_vars = {
-        "hidden": None,  # x_k-1
-        "matrcies": None,  # discrete time state space matrices
-    }
+    process_in_chunks: bool = True
 
     image_dist_type = "MSE"
 
@@ -161,9 +156,9 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        reduction: str = "sum",  # Mean or sum
+        reduction: str = "mean",  # Mean or sum
         clip: bool = True,
-        free: float = 0.5,
+        free: float = 2.0,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
@@ -280,8 +275,6 @@ class S4WorldModel(nn.Module):
         )
 
         if compute_reconstructions:
-            # Reconstruct depth images by decoding the hidden and latent posterior states
-
             # Predict depth images by decoding the hidden and latent prior states
             out["depth"]["pred"] = self.reconstruct_depth(
                 out["hidden"], out["z_prior"]["sample"]
@@ -306,7 +299,7 @@ class S4WorldModel(nn.Module):
 
         # Compute the latent posteriors from the input images
         out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
-            self.get_latent_posteriors_from_images(image)
+            self.get_latent_posteriors_from_images(image, sample_mean=True)
         )
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
@@ -322,7 +315,7 @@ class S4WorldModel(nn.Module):
         out["hidden"] = self.PSSM_blocks(g)
         # Compute the latent prior distributions from the hidden state
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-            self.get_latent_prior_from_hidden(out["hidden"])
+            self.get_latent_prior_from_hidden(out["hidden"], sample_mean=True)
         )
 
         if compute_recon:
@@ -341,12 +334,14 @@ class S4WorldModel(nn.Module):
 
     def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
         assert self.rnn_mode
+        print(init_imgs.shape, init_actions.shape)
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
         vars = {
             "params": params,
             "cache": variables["cache"],
             "prime": variables["prime"],
         }
+
         _, prime_vars = self.apply(
             vars, init_imgs, init_actions, mutable=["prime", "cache"]
         )
@@ -360,24 +355,18 @@ class S4WorldModel(nn.Module):
         single_step: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
         assert self.rnn_mode
-        preds = {}
         if not single_step:
-            preds = self.__call__(
+            return self.__call__(
                 imgs,
                 actions,
                 compute_reconstructions,
             )
         else:
-            preds = self.forward_single_step(
+            return self.forward_single_step(
                 imgs,
                 actions,
                 compute_reconstructions,
             )
-        return preds
-
-    def init_CNN_mode(self, init_imgs, init_actions) -> None:
-        assert not self.rnn_mode
-        variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
 
     def forward_CNN_mode(self, imgs, actions, compute_reconstructions: bool = False):
         return self._call_(actions, imgs, compute_reconstructions)
@@ -397,10 +386,8 @@ class S4WorldModel(nn.Module):
         posterior, _ = self.get_latent_posteriors_from_images(
             context_imgs, sample_mean=False
         )
-        print(posterior.shape)
         g = self.input_head(jnp.concatenate((posterior, context_actions), axis=-1))
         hidden = jnp.expand_dims(self.PSSM_blocks(g)[:, -1, :], axis=1)
-        print(hidden.shape)
         prior, _ = self.get_latent_prior_from_hidden(hidden, sample_mean=False)
         return prior, hidden
 

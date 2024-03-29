@@ -17,7 +17,7 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 30
+        self.num_trajs = 16000
         self.max_depth_value = 20
         self.min_depth_value = 0.0
 
@@ -77,10 +77,10 @@ if __name__ == "__main__":
     )
 
     train_dataset, val_dataset = split_dataset(dataset, 0.1)
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     train_batch, _, _ = next(iter(train_loader))
 
     for idx, image in enumerate(train_batch[0], 1):
         print(image.size())
-        plt.imsave(f"imgs/test{idx}.png", image.view(270, 480).cpu().numpy())
+        plt.imsave(f"imgs/test{idx}.png", image.view(135, 240).cpu().numpy())

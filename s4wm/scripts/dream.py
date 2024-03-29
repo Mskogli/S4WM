@@ -14,8 +14,8 @@ from s4wm.utils.dlpack import from_torch_to_jax
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    torch.manual_seed(13)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    torch.manual_seed(0)
 
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=True, **cfg.wm)
     _, trainloader = create_depth_dataset(batch_size=4)
@@ -28,33 +28,32 @@ def main(cfg: DictConfig) -> None:
     init_actions = jnp.zeros_like(test_actions)
 
     params = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=4-latent_type=disc/checkpoint_8"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-latent_type=disc/checkpoint_11"
     )["params"]
     cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
 
-    ctx_l = 70
-    dream_l = 10
+    ctx_l = 90
+    dream_l = 9
     context_imgs = test_depth_imgs[:, :ctx_l, :]
     context_actions = test_actions[:, 1 : ctx_l + 1, :]
     dream_actions = test_actions[:, ctx_l + 1 : ctx_l + dream_l + 1, :]
     dream_actions = jnp.zeros_like(dream_actions)
-    # dream_actions = dream_actions.at[:, :, 3].set(1)  # Yaw
-    print(dream_actions)
+    dream_actions = dream_actions.at[:, :, 2].set(-0.645)
 
     out, _ = model.apply(
         {"params": params, "cache": cache, "prime": prime},
         context_imgs,
         context_actions,
         dream_actions,
-        10,
+        dream_l,
         mutable=["cache"],
         method="dream",
     )
 
     for i in range(dream_l):
-        plt.imsave(f"imgs/draum_{i}.png", out[0][i][2, 0].reshape(135, 240))
+        plt.imsave(f"imgs/draum_{i}.png", out[0][i][3, 0].reshape(135, 240))
         plt.imsave(
-            f"imgs/gt_dream{i}.png", test_depth_imgs[2, ctx_l + i].reshape(135, 240)
+            f"imgs/gt_dream{i}.png", test_depth_imgs[3, ctx_l + i].reshape(135, 240)
         )
 
 
