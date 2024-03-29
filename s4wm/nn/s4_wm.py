@@ -2,7 +2,9 @@ import jax
 import orbax
 import jax.numpy as jnp
 import orbax.checkpoint
+import torch
 
+from functools import partial
 from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
 from omegaconf import DictConfig
@@ -12,7 +14,8 @@ from .encoder import ImageEncoder
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg
 
-from typing import Dict, Union, Tuple
+from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
+from typing import Dict, Union, Tuple, Sequence
 
 tfd = tfp.distributions
 f32 = jnp.float32
@@ -440,6 +443,119 @@ class S4WorldModel(nn.Module):
             pred_depths.append(pred_depth)
 
         return pred_depths, priors
+
+
+@partial(jax.jit, static_argnums=(0))
+def _jitted_forward(
+    model, params, cache, prime, imgs: jax.Array, actions: jax.Array
+) -> jax.Array:
+    return model.apply(
+        {
+            "params": sg(params),
+            "cache": sg(cache),
+            "prime": sg(prime),
+        },
+        imgs,
+        actions,
+        single_step=True,
+        mutable=["cache"],
+        method="forward_RNN_mode",
+    )
+
+
+class S4WMTorchWrapper:
+    def __init__(
+        self,
+        batch_dim: int,
+        ckpt_path: str,
+        d_latent: int = 128,
+        d_pssm_blocks: int = 512,
+        d_ssm: int = 32,
+        num_pssm_blocks: int = 4,
+        discrete_latent_state: bool = True,
+        l_max: int = 99,
+    ) -> None:
+        self.d_pssm_block = d_pssm_blocks
+        self.d_ssm = d_ssm
+        self.num_pssm_blocks = num_pssm_blocks
+
+        self.model = S4WorldModel(
+            S4_config=DictConfig(
+                {
+                    "d_model": d_pssm_blocks,
+                    "layer": {"l_max": l_max, "N": d_ssm},
+                    "n_blocks": num_pssm_blocks,
+                }
+            ),
+            training=False,
+            process_in_chunks=False,
+            rnn_mode=True,
+            discrete_latent_state=discrete_latent_state,
+            **DictConfig(
+                {
+                    "latent_dim": d_latent,
+                }
+            ),
+        )
+
+        self.params = self.model.restore_checkpoint_state(ckpt_path)["params"]
+
+        init_depth = jnp.zeros((batch_dim, 1, 135, 240, 1))
+        init_actions = jnp.zeros((batch_dim, 1, 4))
+
+        self.rnn_cache, self.prime = self.model.init_RNN_mode(
+            self.params,
+            init_depth,
+            init_actions,
+        )
+
+        self.rnn_cache, self.prime, self.params = (
+            sg(self.rnn_cache),
+            sg(self.prime),
+            sg(self.params),
+        )
+
+        # Force compilation
+        _ = _jitted_forward(
+            self.model,
+            self.params,
+            self.rnn_cache,
+            self.prime,
+            init_depth,
+            init_actions,
+        )
+        return
+
+    def forward(
+        self, depth_imgs: torch.tensor, actions: torch.tensor
+    ) -> Tuple[torch.tensor, ...]:  # 2 tuple
+
+        jax_imgs, jax_actions = from_torch_to_jax(depth_imgs), from_torch_to_jax(
+            actions
+        )
+        jax_preds, vars = _jitted_forward(
+            self.model, self.params, self.rnn_cache, self.prime, jax_imgs, jax_actions
+        )
+        self.rnn_cache = vars["cache"]
+
+        return (
+            from_jax_to_torch(jax_preds["hidden"]),
+            from_jax_to_torch(jax_preds["z_posterior"]["sample"]),
+        )
+
+    def reset_cache(self, batch_idx: Sequence) -> None:
+        for i in range(self.num_pssm_blocks):
+            for j in range(2):
+                self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                    "cache_x_k"
+                ] = (
+                    self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                        "cache_x_k"
+                    ]
+                    .at[jnp.array([batch_idx])]
+                    .set(jnp.ones((self.d_ssm, self.d_pssm_block), dtype=jnp.complex64))
+                )
+        return
 
 
 if __name__ == "__main__":
