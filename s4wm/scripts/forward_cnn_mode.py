@@ -16,34 +16,40 @@ from s4wm.utils.dlpack import from_torch_to_jax
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    torch.manual_seed(28)
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
-    _, trainloader = create_depth_dataset(batch_size=2)
+    torch.manual_seed(0)
+
+    _, trainloader = create_depth_dataset(batch_size=4)
     test_depth_imgs, test_actions, _ = next(iter(trainloader))
 
     test_depth_imgs = from_torch_to_jax(test_depth_imgs)
     test_actions = from_torch_to_jax(test_actions)
 
-    init_depth = jnp.zeros_like(test_depth_imgs)
-    init_actions = jnp.zeros_like(test_actions)
-
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/scripts/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=2/checkpoint_97"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-latent_type=disc/checkpoint_15"
     )
     params = state["params"]
 
-    model.init(jax.random.PRNGKey(0), init_depth, init_actions)
+    print(test_depth_imgs.shape, test_actions.shape)
+    model.init(jax.random.PRNGKey(0), test_depth_imgs, test_actions)
 
     out = model.apply(
-        {"params": params}, test_depth_imgs, test_actions, compute_reconstructions=True
+        {"params": params},
+        test_depth_imgs,
+        test_actions,
+        compute_reconstructions=True,
+        sample_mean=False,
     )
 
     pred_depth = out["depth"]["pred"].mean()
     recon_depth = out["depth"]["recon"].mean()
-    for i in range(75):
-        plt.imsave(f"imgs/pred_{i}.png", pred_depth[1, i, :].reshape(270, 480))
-        plt.imsave(f"imgs/recon_{i}.png", recon_depth[1, i, :].reshape(270, 480))
-        plt.imsave(f"imgs/label_{i}.png", test_depth_imgs[1, i, :].reshape(270, 480))
+    print(pred_depth.shape)
+    for i in range(99):
+        plt.imsave(f"imgs/pred_{i}.png", pred_depth[3, i, :].reshape(135, 240))
+        plt.imsave(f"imgs/recon_{i}.png", recon_depth[3, i, :].reshape(135, 240))
+        plt.imsave(
+            f"imgs/label_{i}.png", test_depth_imgs[3, i + 1, :].reshape(135, 240)
+        )
 
 
 if __name__ == "__main__":

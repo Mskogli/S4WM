@@ -3,7 +3,6 @@ import hydra
 import jax
 import jax.numpy as np
 import optax
-import shutil
 import torch
 
 from functools import partial
@@ -65,10 +64,11 @@ def create_train_state(
     params = params["params"]
 
     if lr_schedule:
-        schedule_fn = lambda lr: optax.cosine_onecycle_schedule(
+        schedule_fn = lambda lr: optax.warmup_cosine_decay_schedule(
+            init_value=0,
             peak_value=lr,
-            transition_steps=total_steps,
-            pct_start=0.1,
+            warmup_steps=1000,
+            decay_steps=total_steps,
         )
     else:
         schedule_fn = lambda lr: lr
@@ -77,7 +77,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(1000), optax.adam(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(5), optax.adamw(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -117,7 +117,7 @@ def train_epoch(state, rng, model_cls, trainloader):
     for batch_depth, batch_actions, batch_labels in tqdm(trainloader):
         rng, drop_rng = jax.random.split(rng)
 
-        state, loss = train_step(
+        state, batch_loss, recon_loss, kld_loss = train_step(
             state,
             drop_rng,
             from_torch_to_jax(batch_depth),
@@ -125,7 +125,9 @@ def train_epoch(state, rng, model_cls, trainloader):
             from_torch_to_jax(batch_labels),
             model,
         )
-        batch_losses.append(loss)
+        batch_losses.append(batch_loss)
+
+        wandb.log({"train/recon_loss": recon_loss, "train/kld_loss": kld_loss})
 
     return (
         state,
@@ -165,20 +167,20 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
             rngs={"dropout": rng},
         )
 
-        loss = model.compute_loss(
+        loss, (recon_loss, kl_loss) = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
             img_posterior=batch_depth_labels,
             z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
             z_prior_dist=out["z_prior"]["dist"],
         )
 
-        return np.mean(loss)
+        return np.mean(loss), (np.mean(recon_loss), np.mean(kl_loss))
 
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=False)
-    loss, grads = grad_fn(state.params)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, (recon_loss, kl_loss)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
 
-    return state, loss
+    return state, loss, recon_loss, kl_loss
 
 
 @partial(jax.jit, static_argnums=4)
@@ -188,7 +190,7 @@ def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
         {"params": params}, batch_depth, batch_actions, compute_reconstructions=True
     )
 
-    loss = model.compute_loss(
+    loss, _ = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
         img_posterior=batch_depth_labels,
         z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
@@ -260,16 +262,13 @@ def train(
 
         if val_loss < best_loss:
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
-            ckpt_path = checkpoints.save_checkpoint(
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=disc"
+            _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
                 epoch,
                 keep=train.epochs,
             )
-            shutil.copy(ckpt_path, f"{run_id}/best_{epoch}")
-            if os.path.exists(f"{run_id}/best_{best_epoch}"):
-                os.remove(f"{run_id}/best_{best_epoch}")
 
             best_loss, best_epoch = val_loss, epoch
 
@@ -290,7 +289,7 @@ def train(
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     print(OmegaConf.to_yaml(cfg))
 

@@ -18,8 +18,8 @@ class StackedPSSMBlocks(nn.Module):
     layer: dict  # Extra arguments to pass into layer constructor
     d_model: int = 512
     n_layers: int = 2
-    n_blocks: int = 4
-    prenorm: bool = True
+    n_blocks: int = 2
+    prenorm: bool = False
     dropout: float = 0.1
     training: bool = True
     embedding: bool = False
@@ -98,7 +98,7 @@ class SequenceBlock(nn.Module):
     dropout: float
     d_model: int
     prenorm: bool = True
-    glu: bool = False
+    glu: bool = True
     training: bool = True
     rnn_mode: bool = False
 
@@ -137,11 +137,11 @@ class S4Layer(nn.Module):
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)
     lr = {
-        "Lambda_re": 0.1,
-        "Lambda_im": 0.1,
-        "P": 0.1,
-        "B": 0.1,
-        "log_step": 0.1,
+        "Lambda_re": 0.01,
+        "Lambda_im": 0.01,
+        "P": 0.01,
+        "B": 0.01,
+        "log_step": 0.01,
     }
 
     def setup(self) -> None:

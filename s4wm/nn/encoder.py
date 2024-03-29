@@ -27,7 +27,7 @@ class ImageEncoder(nn.Module):
         )  # Equivalent to Pytorch's Xavier Uniform https://jax.readthedocs.io/en/latest/_autosummary/jax.nn.initializers.glorot_uniform.html
 
         self.conv_00 = nn.Conv(
-            features=32, kernel_size=(5, 5), strides=2, padding=(2, 2)
+            features=32, kernel_size=(5, 5), strides=1, padding=(2, 2)
         )
         self.conv_01 = nn.Conv(
             features=32,
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     # Test Encoder Implementation
     key = random.PRNGKey(0)
     encoder = ImageEncoder(latent_dim=256)
-    random_img_batch = random.normal(key, (2, 10, 270, 480, 1))
+    random_img_batch = random.normal(key, (2, 10, 135, 240, 1))
 
     params = encoder.init(key, random_img_batch)["params"]
     output = encoder.apply({"params": params}, random_img_batch)
