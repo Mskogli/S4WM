@@ -10,7 +10,7 @@ from tensorflow_probability.substrates import jax as tfp
 from omegaconf import DictConfig
 
 from .decoder import ImageDecoder
-from .encoder import ImageEncoder
+from .encoder import ImageEncoder, Encoder
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg, LogCoshDist
 
@@ -60,18 +60,12 @@ class S4WorldModel(nn.Module):
             jax.random.PRNGKey(self.seed), num=2
         )
 
-        self.encoder = ImageEncoder(
-            latent_dim=(
-                self.latent_dim if self.discrete_latent_state else 2 * self.latent_dim
-            ),
-            process_in_chunks=self.process_in_chunks,
-            act="silu",
-        )
-        self.decoder = ImageDecoder(
+        self.encoder = Encoder(
+            embedding_dim=self.latent_dim // 2,
             latent_dim=self.latent_dim,
-            process_in_chunks=self.process_in_chunks,
-            act="silu",
+            c_hid=32,
         )
+        self.decoder = ImageDecoder()
 
         self.PSSM_blocks = S4Block(
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
@@ -79,16 +73,26 @@ class S4WorldModel(nn.Module):
 
         self.statistic_heads = {
             "embedding": lambda x: x,
-            "hidden": nn.Dense(
-                features=(
-                    self.latent_dim
-                    if self.discrete_latent_state
-                    else 2 * self.latent_dim
-                )
+            "hidden": nn.Sequential(
+                [
+                    nn.Dense(features=(2 * self.latent_dim)),
+                    nn.silu,
+                    nn.Dense(features=(2 * self.latent_dim)),
+                    nn.silu,
+                    nn.Dense(features=self.latent_dim),
+                ]
             ),
         }
 
-        self.input_head = nn.Dense(features=self.S4_config["d_model"])
+        self.input_head = nn.Sequential(
+            [
+                nn.Dense(features=2 * self.S4_config["d_model"]),
+                nn.silu,
+                nn.Dense(features=2 * self.S4_config["d_model"]),
+                nn.silu,
+                nn.Dense(features=self.S4_config["d_model"]),
+            ]
+        )
 
     def get_latent_posteriors_from_images(
         self, image: jnp.ndarray, sample_mean: bool = False
@@ -148,6 +152,7 @@ class S4WorldModel(nn.Module):
         self, hidden: jnp.ndarray, z_posterior: jnp.ndarray
     ) -> tfd.Distribution:
         x = self.decoder(jnp.concatenate((hidden, z_posterior), axis=-1))
+        print("decoded", x.shape)
         img_prior_dists = self.get_distribution_from_statistics(
             statistics=x, dist_type="Image"
         )
@@ -161,7 +166,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist: tfd.Distribution,
         reduction: str = "mean",  # Mean or sum
         clip: bool = True,
-        free: float = 0.5,
+        free: float = 2,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
@@ -225,9 +230,7 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            # if statistics_head == "hidden":
-            # logits = nn.relu(logits)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 128, 32)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -237,7 +240,6 @@ class S4WorldModel(nn.Module):
             return {"logits": logits}
 
         x = self.statistic_heads[statistics_head](x)
-        # x = nn.relu(x)
         mean, std = jnp.split(x, 2, -1)
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
 
@@ -246,9 +248,11 @@ class S4WorldModel(nn.Module):
     def encode_and_step(
         self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
     ) -> Tuple[jnp.ndarray]:
-        z = self.get_latent_posterior_from_images(image, False)
-        h = self.PSSM_blocks(self.input_head(jnp.concatenate(latent, action)))
-        return z, h
+        z, _ = self.get_latent_posteriors_from_images(image, False)
+        # h = self.PSSM_blocks(
+        #     self.input_head(jnp.concatenate((latent, action), axis=-1))
+        # )
+        return z, 0
 
     def __call__(
         self,
@@ -274,13 +278,14 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    out["z_posterior"]["sample"],
+                    out["z_posterior"]["sample"][:, :-1],
                     actions,
                 ),
                 axis=-1,
             )
         )
         out["hidden"] = self.PSSM_blocks(g)
+        print("hidden", out["hidden"].shape)
 
         # Compute the latent prior distributions from the hidden state
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
@@ -296,6 +301,8 @@ class S4WorldModel(nn.Module):
             out["depth"]["recon"] = self.reconstruct_depth(
                 out["hidden"], out["z_posterior"]["sample"][:, 1:]
             )
+
+            print(out["depth"]["recon"].mean().shape)
 
         return out
 
@@ -545,9 +552,9 @@ class S4WMTorchWrapper:
         jax_imgs, jax_actions = from_torch_to_jax(depth_imgs), from_torch_to_jax(
             actions
         )
-        (z, h), variables = _jitted_forward(
+        out, variables = _jitted_forward(
             self.model,
-            self.params,
+            sg(self.params),
             self.rnn_cache,
             self.prime,
             jax_imgs,
@@ -557,8 +564,8 @@ class S4WMTorchWrapper:
         self.rnn_cache = variables["cache"]
 
         return (
-            from_jax_to_torch(z),
-            from_jax_to_torch(h),
+            from_jax_to_torch(out[0]),
+            from_jax_to_torch(out[1]),
         )
 
     def reset_cache(self, batch_idx: Sequence) -> None:

@@ -2,7 +2,7 @@ dataset: depth_dataset
 seed: 1
 
 wm:
-  latent_dim: 4096
+  latent_dim: 1024
   num_actions: 4
   alpha: 0.80
   beta_rec: 1.0

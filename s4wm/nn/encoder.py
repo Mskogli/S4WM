@@ -1,8 +1,12 @@
 import jax.numpy as jnp
+import jax
+import time
+import os
 
 from jax import random
 from flax import linen as nn
 from jax.nn.initializers import glorot_uniform, zeros
+from functools import partial
 
 
 class ImageEncoder(nn.Module):
@@ -132,7 +136,7 @@ class ImageEncoder(nn.Module):
     def __call__(self, imgs: jnp.ndarray) -> jnp.ndarray:
         # Running the forward pass in chunks requires less contiguous memory
         if self.process_in_chunks:
-            chunks = jnp.array_split(imgs, 4, axis=1)
+            chunks = jnp.array_split(imgs, 4, axis=0)
             downsampled_chunks = [self._downsample(chunk) for chunk in chunks]
 
             return jnp.concatenate(downsampled_chunks, axis=1)
@@ -140,18 +144,59 @@ class ImageEncoder(nn.Module):
             return self._downsample(imgs)
 
 
-# class SimpleEncoder(nn.module):
-#     latent_dim: int
-#     act: str = "elu"
-#     process_in_chunks: bool = False
+class Encoder(nn.Module):
+    c_hid: int
+    embedding_dim: 512
+    latent_dim: 4096
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(features=self.c_hid, kernel_size=(3, 3), strides=2)(x)
+        x = nn.silu(x)
+        x = nn.Conv(features=self.c_hid, kernel_size=(3, 3))(x)
+        x = nn.silu(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(3, 3), strides=2)(x)
+        x = nn.silu(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(3, 3))(x)
+        x = nn.silu(x)
+        x = x.reshape(x.shape[0], x.shape[1], -1)
+        x = nn.Dense(features=self.embedding_dim)(x)
+        x = nn.silu(x)
+        x = nn.Dense(features=self.latent_dim)(x)
+        return x
+
+
+@partial(jax.jit, static_argnums=(0))
+def jitted_forward(model, params, image):
+    return model.apply(
+        {
+            "params": jax.lax.stop_gradient(params),
+        },
+        jax.lax.stop_gradient(image),
+    )
 
 
 if __name__ == "__main__":
     # Test Encoder Implementation
-    key = random.PRNGKey(0)
-    encoder = ImageEncoder(latent_dim=256)
-    random_img_batch = random.normal(key, (2, 10, 135, 240, 1))
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
+    key = random.PRNGKey(0)
+    encoder = Encoder(latent_dim=1024, c_hid=16, embedding_dim=2048)
+
+    random_img_batch = random.normal(key, (128, 135, 240, 1))
     params = encoder.init(key, random_img_batch)["params"]
     output = encoder.apply({"params": params}, random_img_batch)
     print("Output shape: ", output.shape)
+
+    _ = jitted_forward(encoder, params, random_img_batch)
+
+    random_img_batch = random.normal(key, (128, 135, 240, 1))
+    fnc = jax.vmap(jitted_forward)
+    fwp_times = []
+    for _ in range(200):
+        start = time.time()
+        _ = jitted_forward(encoder, params, random_img_batch)
+        end = time.time()
+        print(end - start)
+        fwp_times.append(end - start)
+    fwp_times = jnp.array(fwp_times)

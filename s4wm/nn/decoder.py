@@ -1,14 +1,16 @@
 import jax.numpy as jnp
 import os
+import jax
+import time
 
 from jax import random
 from flax import linen as nn
 from jax.nn.initializers import glorot_uniform, zeros
+from functools import partial
 
 
 class ImageDecoder(nn.Module):
-    latent_dim: int
-    act: str = "elu"
+    act: str = "silu"
     process_in_chunks: bool = False
 
     def setup(self) -> None:
@@ -108,14 +110,67 @@ class ImageDecoder(nn.Module):
             return self._upsample(latents)
 
 
+class Decoder(nn.Module):
+    embedding_dim: 1024
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Dense(features=self.embedding_dim)(x)
+        x = nn.silu(x)
+        x = nn.Dense(features=24 * 40 * 128)(x)
+        x = x.reshape(x.shape[0], x.shape[1], 24, 40, 128)
+
+        x = nn.ConvTranspose(
+            features=64, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+        )(x)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=32, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+        )(x)
+        print(x.shape)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+        )(x)
+        print(x.shape)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=1, kernel_size=(3, 3), strides=(2, 2), padding="VALID"
+        )(x)
+        print(x.shape)
+        x = nn.sigmoid(x)
+
+
+@partial(jax.jit, static_argnums=(0))
+def jitted_forward(model, params, latent):
+    return model.apply(
+        {
+            "params": jax.lax.stop_gradient(params),
+        },
+        jax.lax.stop_gradient(latent),
+    )
+
+
 if __name__ == "__main__":
     # Test decoder implementation
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     key = random.PRNGKey(0)
-    decoder = ImageDecoder(latent_dim=128)
+    decoder = Decoder(embedding_dim=256)
 
-    random_latent_batch = random.normal(key, (2, 10, 128))
+    random_latent_batch = random.normal(key, (4, 100, 128))
     params = decoder.init(key, random_latent_batch)["params"]
     output = decoder.apply({"params": params}, random_latent_batch)
     print("Output shape: ", output.shape)
+
+    # _ = jitted_forward(decoder, params, random_latent_batch)
+
+    # fnc = jax.vmap(jitted_forward)
+    # fwp_times = []
+    # for _ in range(200):
+    #     start = time.time()
+    #     _ = jitted_forward(decoder, params, random_latent_batch)
+    #     end = time.time()
+    #     print(end - start)
+    #     fwp_times.append(end - start)
+    # fwp_times = jnp.array(fwp_times)

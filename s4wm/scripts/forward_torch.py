@@ -25,11 +25,13 @@ if __name__ == "__main__":
         (NUM_ENVS, 1, 135, 240, 1), requires_grad=False, device="cuda:0"
     )
     init_actions = torch.ones((NUM_ENVS, 1, 20), requires_grad=False, device="cuda:0")
+    latent = jnp.zeros((NUM_ENVS, 1, 4096))
 
+    print("batman")
     fwp_times = []
     for _ in range(200):
         start = time.time()
-        _ = torch_wm.forward(init_depth, init_actions)
+        _ = torch_wm.forward(init_depth, init_actions, latent)
         end = time.time()
         print(end - start)
         fwp_times.append(end - start)
