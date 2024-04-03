@@ -12,7 +12,7 @@ from omegaconf import DictConfig
 from .decoder import ImageDecoder
 from .encoder import ImageEncoder
 from .s4_nn import S4Block
-from .dists import OneHotDist, MSEDist, sg
+from .dists import OneHotDist, MSEDist, sg, LogCoshDist
 
 from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
 from typing import Dict, Union, Tuple, Sequence
@@ -65,12 +65,12 @@ class S4WorldModel(nn.Module):
                 self.latent_dim if self.discrete_latent_state else 2 * self.latent_dim
             ),
             process_in_chunks=self.process_in_chunks,
-            act="elu",
+            act="silu",
         )
         self.decoder = ImageDecoder(
             latent_dim=self.latent_dim,
             process_in_chunks=self.process_in_chunks,
-            act="elu",
+            act="silu",
         )
 
         self.PSSM_blocks = S4Block(
@@ -161,7 +161,7 @@ class S4WorldModel(nn.Module):
         z_prior_dist: tfd.Distribution,
         reduction: str = "mean",  # Mean or sum
         clip: bool = True,
-        free: float = 2.0,
+        free: float = 0.5,
     ) -> jnp.ndarray:
 
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
@@ -201,7 +201,7 @@ class S4WorldModel(nn.Module):
                 statistics.shape[0], statistics.shape[1], -1
             ).astype(f32)
             img_dist = (
-                MSEDist(mean, 1, agg="sum")
+                LogCoshDist(mean, 1, agg="mean")
                 if self.image_dist_type == "MSE"
                 else tfd.Independent(tfd.Normal(mean, 1), 1)
             )
@@ -225,7 +225,9 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
+            # if statistics_head == "hidden":
+            # logits = nn.relu(logits)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 128, 32)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -235,10 +237,18 @@ class S4WorldModel(nn.Module):
             return {"logits": logits}
 
         x = self.statistic_heads[statistics_head](x)
+        # x = nn.relu(x)
         mean, std = jnp.split(x, 2, -1)
         std = 2 * jax.nn.sigmoid(std / 2) + 0.1
 
         return {"mean": mean, "std": std}
+
+    def encode_and_step(
+        self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
+    ) -> Tuple[jnp.ndarray]:
+        z = self.get_latent_posterior_from_images(image, False)
+        h = self.PSSM_blocks(self.input_head(jnp.concatenate(latent, action)))
+        return z, h
 
     def __call__(
         self,
@@ -264,8 +274,8 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    out["z_posterior"]["sample"][:, :-1],
-                    actions[:, 1:],
+                    out["z_posterior"]["sample"],
+                    actions,
                 ),
                 axis=-1,
             )
@@ -447,7 +457,7 @@ class S4WorldModel(nn.Module):
 
 @partial(jax.jit, static_argnums=(0))
 def _jitted_forward(
-    model, params, cache, prime, imgs: jax.Array, actions: jax.Array
+    model, params, cache, prime, image: jax.Array, action: jax.Array, latent: jax.Array
 ) -> jax.Array:
     return model.apply(
         {
@@ -455,11 +465,11 @@ def _jitted_forward(
             "cache": sg(cache),
             "prime": sg(prime),
         },
-        imgs,
-        actions,
-        single_step=True,
+        image,
+        action,
+        latent,
         mutable=["cache"],
-        method="forward_RNN_mode",
+        method="encode_and_step",
     )
 
 
@@ -470,7 +480,7 @@ class S4WMTorchWrapper:
         ckpt_path: str,
         d_latent: int = 128,
         d_pssm_blocks: int = 512,
-        d_ssm: int = 32,
+        d_ssm: int = 128,
         num_pssm_blocks: int = 4,
         discrete_latent_state: bool = True,
         l_max: int = 99,
@@ -501,7 +511,8 @@ class S4WMTorchWrapper:
         self.params = self.model.restore_checkpoint_state(ckpt_path)["params"]
 
         init_depth = jnp.zeros((batch_dim, 1, 135, 240, 1))
-        init_actions = jnp.zeros((batch_dim, 1, 4))
+        init_actions = jnp.zeros((batch_dim, 1, 20))
+        init_latent = jnp.zeros((batch_dim, 1, 4096))
 
         self.rnn_cache, self.prime = self.model.init_RNN_mode(
             self.params,
@@ -518,29 +529,36 @@ class S4WMTorchWrapper:
         # Force compilation
         _ = _jitted_forward(
             self.model,
-            self.params,
+            sg(self.params),
             self.rnn_cache,
             self.prime,
             init_depth,
             init_actions,
+            init_latent,
         )
         return
 
     def forward(
-        self, depth_imgs: torch.tensor, actions: torch.tensor
+        self, depth_imgs: torch.tensor, actions: torch.tensor, latent: jax.Array
     ) -> Tuple[torch.tensor, ...]:  # 2 tuple
 
         jax_imgs, jax_actions = from_torch_to_jax(depth_imgs), from_torch_to_jax(
             actions
         )
-        jax_preds, vars = _jitted_forward(
-            self.model, self.params, self.rnn_cache, self.prime, jax_imgs, jax_actions
+        (z, h), variables = _jitted_forward(
+            self.model,
+            self.params,
+            self.rnn_cache,
+            self.prime,
+            jax_imgs,
+            jax_actions,
+            latent,
         )
-        self.rnn_cache = vars["cache"]
+        self.rnn_cache = variables["cache"]
 
         return (
-            from_jax_to_torch(jax_preds["hidden"]),
-            from_jax_to_torch(jax_preds["z_posterior"]["sample"]),
+            from_jax_to_torch(z),
+            from_jax_to_torch(h),
         )
 
     def reset_cache(self, batch_idx: Sequence) -> None:

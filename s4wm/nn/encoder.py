@@ -7,7 +7,6 @@ from jax.nn.initializers import glorot_uniform, zeros
 
 class ImageEncoder(nn.Module):
     latent_dim: int
-    seq_len: int = 150
     act: str = "elu"
     process_in_chunks: bool = False
 
@@ -139,6 +138,12 @@ class ImageEncoder(nn.Module):
             return jnp.concatenate(downsampled_chunks, axis=1)
         else:
             return self._downsample(imgs)
+
+
+# class SimpleEncoder(nn.module):
+#     latent_dim: int
+#     act: str = "elu"
+#     process_in_chunks: bool = False
 
 
 if __name__ == "__main__":

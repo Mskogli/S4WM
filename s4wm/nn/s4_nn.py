@@ -19,7 +19,7 @@ class StackedPSSMBlocks(nn.Module):
     d_model: int = 512
     n_layers: int = 2
     n_blocks: int = 2
-    prenorm: bool = False
+    prenorm: bool = True
     dropout: float = 0.1
     training: bool = True
     embedding: bool = False

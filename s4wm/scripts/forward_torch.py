@@ -8,23 +8,23 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 
 if __name__ == "__main__":
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
 
-    NUM_ENVS = 64
+    NUM_ENVS = 1
 
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=4-latent_type=disc/checkpoint_12",
-        d_latent=1024,
-        d_pssm_blocks=512,
-        num_pssm_blocks=2,
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-128x32_latent-3_blocks/checkpoint_19",
+        d_latent=4096,
+        d_pssm_blocks=1024,
+        num_pssm_blocks=3,
     )
 
     init_depth = torch.zeros(
         (NUM_ENVS, 1, 135, 240, 1), requires_grad=False, device="cuda:0"
     )
-    init_actions = torch.ones((NUM_ENVS, 1, 4), requires_grad=False, device="cuda:0")
+    init_actions = torch.ones((NUM_ENVS, 1, 20), requires_grad=False, device="cuda:0")
 
     fwp_times = []
     for _ in range(200):

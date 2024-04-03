@@ -78,23 +78,23 @@ class LogCoshDist:
 
     def log_prob(self, value):
         assert self._mode.shape == value.shape, (self._mode.shape, value.shape)
-        distance = (self._mode - value) ** 2
         if self._agg == "mean":
-            loss = jnp.mean(
+            loss = (
                 jnp.sum(
                     tfm.log_cosh(value - self._mode),
                     axis=-1,
-                ),
-                axis=-1,
+                )
+                / 1
             )
+
         elif self._agg == "sum":
-            loss = jnp.sum(
+            return (
                 jnp.sum(
                     tfm.log_cosh(value - self._mode),
                     axis=-1,
                 ),
-                axis=-1,
             )
+
         else:
             raise NotImplementedError(self._agg)
         return -loss

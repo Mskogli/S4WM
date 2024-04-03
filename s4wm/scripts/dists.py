@@ -36,13 +36,18 @@ if __name__ == "__main__":
     print(kl_div.shape)
 
     img_dist = MSEDist(mean, 1, agg="mean")
-    log_cosh_loss = jnp.sum(
+    log_cosh_loss = jnp.mean(
         jnp.sum(tfm.log_cosh(dist_log_prob_1.mean() - dist_log_prob_2.mean()), axis=-1),
         axis=-1,
+    )
+
+    print(
+        jnp.sum(
+            tfm.log_cosh(dist_log_prob_1.mean() - dist_log_prob_2.mean()), axis=-1
+        ).shape
     )
     log_cosh = jnp.mean(
         tfm.log_cosh(dist_log_prob_1.mean() - dist_log_prob_2.mean()), axis=-1
     )
-    print(jnp.sum(dist_log_prob_1.log_prob(mean_2) / (270 * 480), axis=-1))
 
-    print(kl_div / 256)
+    print(log_cosh_loss)
