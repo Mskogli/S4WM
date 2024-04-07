@@ -9,6 +9,7 @@ from functools import partial
 from flax.training import checkpoints, train_state
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+from typing import Any
 
 from s4wm.nn.s4_wm import S4WorldModel
 from s4wm.nn.s4_nn import S4Layer
@@ -22,6 +23,10 @@ try:
     assert hasattr(wandb, "__version__")  # verify package import not local dir
 except (ImportError, AssertionError):
     wandb = None
+
+
+class TrainState(train_state.TrainState):
+    batch_stats: Any
 
 
 def map_nested_fn(fn):
@@ -43,6 +48,7 @@ def create_train_state(
     lr=1e-3,
     lr_layer=None,
     lr_schedule=False,
+    use_batchmean=False,
     weight_decay=0.0,
     total_steps=-1,
 ):
@@ -54,14 +60,19 @@ def create_train_state(
         init_actions
     )
 
-    params = model.init(
+    parameters = model.init(
         {"params": init_rng, "dropout": dropout_rng},
         init_depth,
         init_actions,
-        compute_reconstructions=True,
+        compute_reconstructions=False,
     )
 
-    params = params["params"]
+    params = parameters["params"]
+
+    if use_batchmean:
+        batch_stats = parameters["batch_stats"]
+    else:
+        batch_stats = None
 
     if lr_schedule:
         schedule_fn = lambda lr: optax.warmup_cosine_decay_schedule(
@@ -77,7 +88,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(5), optax.adamw(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(500), optax.adamw(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -107,7 +118,14 @@ def create_train_state(
     print(f"[*] Trainable Parameters: {sum(jax.tree_leaves(param_sizes))}")
     print(f"[*] Total training steps: {total_steps}")
 
-    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+    if use_batchmean:
+        return TrainState.create(
+            apply_fn=model.apply, params=params, batch_stats=batch_stats, tx=tx
+        )
+    else:
+        return TrainState.create(
+            apply_fn=model.apply, params=params, batch_stats=batch_stats, tx=tx
+        )
 
 
 def train_epoch(state, rng, model_cls, trainloader):
@@ -135,17 +153,17 @@ def train_epoch(state, rng, model_cls, trainloader):
     )
 
 
-def validate(params, model_cls, testloader):
+def validate(state, model_cls, testloader):
     losses = []
     model = model_cls(training=False)
 
     for batch_depth, batch_actions, batch_labels in tqdm(testloader):
 
         loss = eval_step(
+            state,
             from_torch_to_jax(batch_depth),
             from_torch_to_jax(batch_actions),
             from_torch_to_jax(batch_labels),
-            params,
             model,
         )
 
@@ -158,14 +176,29 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
 
     @jax.jit
     def loss_fn(params):
+        out, updates = None, None
 
-        out = model.apply(
-            {"params": params},
-            batch_depth,
-            batch_actions,
-            compute_reconstructions=True,
-            rngs={"dropout": rng},
-        )
+        if state.batch_stats is not None:
+            out, updates = model.apply(
+                {"params": params, "batch_stats": state.batch_stats},
+                imgs=batch_depth,
+                actions=batch_actions,
+                compute_reconstructions=False,
+                sample_mean=False,
+                train=True,
+                rngs={"dropout": rng},
+                mutable=["batch_stats"],
+            )
+        else:
+            out = model.apply(
+                {"params": params},
+                imgs=batch_depth,
+                actions=batch_actions,
+                compute_reconstructions=False,
+                sample_mean=False,
+                train=True,
+                rngs={"dropout": rng},
+            )
 
         loss, (recon_loss, kl_loss) = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
@@ -174,21 +207,42 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
             z_prior_dist=out["z_prior"]["dist"],
         )
 
-        return np.mean(loss), (np.mean(recon_loss), np.mean(kl_loss))
+        return np.mean(loss), (
+            np.mean(recon_loss),
+            np.mean(kl_loss),
+            updates,
+        )
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (loss, (recon_loss, kl_loss)), grads = grad_fn(state.params)
+    (loss, (recon_loss, kl_loss, updates)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
+    if updates is not None:
+        state = state.replace(batch_stats=updates["batch_stats"])
 
     return state, loss, recon_loss, kl_loss
 
 
 @partial(jax.jit, static_argnums=4)
-def eval_step(batch_depth, batch_actions, batch_depth_labels, params, model):
+def eval_step(state, batch_depth, batch_actions, batch_depth_labels, model):
 
-    out = model.apply(
-        {"params": params}, batch_depth, batch_actions, compute_reconstructions=True
-    )
+    if state.batch_stats is not None:
+        out = model.apply(
+            {"params": state.params, "batch_stats": state.batch_stats},
+            batch_depth,
+            batch_actions,
+            compute_reconstructions=False,
+            sample_mean=False,
+            train=False,
+        )
+    else:
+        out = model.apply(
+            {"params": state.params},
+            batch_depth,
+            batch_actions,
+            compute_reconstructions=False,
+            sample_mean=False,
+            train=False,
+        )
 
     loss, _ = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
@@ -254,7 +308,7 @@ def train(
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
-        val_loss = validate(state.params, model_cls, testloader)
+        val_loss = validate(state, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
@@ -262,7 +316,7 @@ def train(
 
         if val_loss < best_loss:
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=cont"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=kengrus"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
@@ -288,8 +342,7 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     print(OmegaConf.to_yaml(cfg))
 

@@ -64,7 +64,7 @@ class DepthImageDataset(Dataset):
 
         labels = imgs[1:, :].view(-1, 135 * 240)
 
-        return (imgs, extras, labels)
+        return (imgs, acts, labels)
 
 
 def split_dataset(

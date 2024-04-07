@@ -14,7 +14,7 @@ from s4wm.utils.dlpack import from_torch_to_jax
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
     torch.manual_seed(0)
@@ -26,7 +26,7 @@ def main(cfg: DictConfig) -> None:
     test_actions = from_torch_to_jax(test_actions)
 
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-128x32_latent-3_blocks/checkpoint_19"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=4-latent_type=disc/checkpoint_4"
     )
     params = state["params"]
 
@@ -34,7 +34,7 @@ def main(cfg: DictConfig) -> None:
     model.init(jax.random.PRNGKey(0), test_depth_imgs, test_actions)
 
     out = model.apply(
-        {"params": params},
+        {"params": jax.lax.stop_gradient(params)},
         test_depth_imgs,
         test_actions,
         compute_reconstructions=True,

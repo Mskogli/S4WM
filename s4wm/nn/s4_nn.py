@@ -62,7 +62,7 @@ class StackedModel(nn.Module):
         self.drop = nn.Dropout(
             self.dropout, broadcast_dims=[0], deterministic=not self.training
         )
-        self.dense_1 = nn.Dense(features=2 * self.d_model)
+        self.dense_1 = nn.Dense(features=self.d_model)
         self.dense_2 = nn.Dense(features=self.d_model)
 
         self.layers = [
@@ -137,11 +137,10 @@ class S4Layer(nn.Module):
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)
     lr = {
-        "Lambda_re": 0.01,
-        "Lambda_im": 0.01,
-        "P": 0.01,
-        "B": 0.01,
-        "log_step": 0.01,
+        "Lambda_re": 1.0,
+        "Lambda_im": 1.0,
+        "P": 1.0,
+        "B": 1.0,
     }
 
     def setup(self) -> None:
@@ -157,7 +156,8 @@ class S4Layer(nn.Module):
         self.C = self.param("C", normal(stddev=0.5**0.5), (self.N, 2))
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
-        self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
+        # self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
+        self.step = 0.1
 
         if not self.rnn_mode:
             self.K = kernel_DPLR(

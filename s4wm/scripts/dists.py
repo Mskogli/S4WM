@@ -29,10 +29,12 @@ if __name__ == "__main__":
     dist_log_prob_1 = tfd.Independent(tfd.Normal(mean, 1), 1)
     dist_log_prob_2 = tfd.MultivariateNormalDiag(mean_2, jnp.ones_like(mean_2))
 
-    dist_kl_1 = tfd.MultivariateNormalDiag(mean_kl_1, jnp.ones_like(mean_kl_1))
-    dist_kl_2 = tfd.MultivariateNormalDiag(mean_kl_1, jnp.ones_like(mean_kl_1) + 0.5)
+    dist_kl_1 = tfd.MultivariateNormalDiag(mean_kl_1, 3 * jnp.ones_like(mean_kl_1))
+    dist_kl_2 = tfd.MultivariateNormalDiag(
+        mean_kl_1 + 0.1, 3 * jnp.ones_like(mean_kl_1)
+    )
 
-    kl_div = jnp.sum(dist_kl_1.kl_divergence(dist_kl_2) / 1024, axis=-1)
+    kl_div = dist_kl_1.kl_divergence(dist_kl_2)
     print(kl_div.shape)
 
     img_dist = MSEDist(mean, 1, agg="mean")
@@ -50,4 +52,4 @@ if __name__ == "__main__":
         tfm.log_cosh(dist_log_prob_1.mean() - dist_log_prob_2.mean()), axis=-1
     )
 
-    print(log_cosh_loss)
+    print(kl_div)

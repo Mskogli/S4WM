@@ -111,34 +111,40 @@ class ImageDecoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    embedding_dim: 1024
+    c_out: int
+    c_hid: int
+    discrete_latent_state: bool
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Dense(features=self.embedding_dim)(x)
-        x = nn.silu(x)
-        x = nn.Dense(features=24 * 40 * 128)(x)
-        x = x.reshape(x.shape[0], x.shape[1], 24, 40, 128)
+        if self.discrete_latent_state:
+            x = nn.Dense(features=512)
+            x = nn.silu(x)
+            x = nn.Dense(features=8 * 15 * self.c_hid)(x)
+            x = nn.silu(x)
+        else:
+            x = nn.Dense(features=8 * 15 * self.c_hid)(x)
+            x = nn.silu(x)
+
+        x = x.reshape(x.shape[0], x.shape[1], 8, 15, -1)
 
         x = nn.ConvTranspose(
-            features=64, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+            features=2 * self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(2, 2)
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=32, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+            features=2 * self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(2, 1)
         )(x)
-        print(x.shape)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=16, kernel_size=(3, 3), strides=(2, 2), padding="SAME"
+            features=self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(1, 1)
         )(x)
-        print(x.shape)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=1, kernel_size=(3, 3), strides=(2, 2), padding="VALID"
+            features=self.c_out, kernel_size=(3, 3), strides=(2, 2), padding=(0, 1)
         )(x)
-        print(x.shape)
-        x = nn.sigmoid(x)
+        x = nn.sigmoid(jnp.squeeze(x[:, :, :, :-1], axis=-1))
+        return x
 
 
 @partial(jax.jit, static_argnums=(0))
@@ -153,12 +159,12 @@ def jitted_forward(model, params, latent):
 
 if __name__ == "__main__":
     # Test decoder implementation
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     key = random.PRNGKey(0)
-    decoder = Decoder(embedding_dim=256)
+    decoder = Decoder(c_hid=32, c_out=1, discrete_latent_state=False)
 
-    random_latent_batch = random.normal(key, (4, 100, 128))
+    random_latent_batch = random.normal(key, (1, 2, 128))
     params = decoder.init(key, random_latent_batch)["params"]
     output = decoder.apply({"params": params}, random_latent_batch)
     print("Output shape: ", output.shape)
