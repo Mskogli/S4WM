@@ -63,7 +63,7 @@ class S4WorldModel(nn.Module):
             latent_dim=self.latent_dim,
         )
         self.decoder = Decoder(
-            c_out=1, c_hid=32, discrete_latent_state=self.discrete_latent_state
+            c_out=1, c_hid=64, discrete_latent_state=self.discrete_latent_state
         )
         self.PSSM_blocks = S4Block(
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
@@ -247,7 +247,7 @@ class S4WorldModel(nn.Module):
 
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 128, 32)
+            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
 
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
@@ -300,9 +300,9 @@ class S4WorldModel(nn.Module):
         # embeddings = self.get_embedding(
         #     out["z_posterior"]["sample"][:, :].reshape(shapes[0], shapes[1], 32, 32)
         # ).reshape(shapes[0], shapes[1], -1)
-        embeddings_2 = self.get_embedding_2(
-            out["z_posterior"]["sample"][:, :].reshape(shapes[0], shapes[1], 128, 32)
-        ).reshape(shapes[0], shapes[1], -1)
+        # embeddings_2 = self.get_embedding_2(
+        #     out["z_posterior"]["sample"][:, :].reshape(shapes[0], shapes[1], 128, 32)
+        # ).reshape(shapes[0], shapes[1], -1)
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
         g = self.input_head(
@@ -323,7 +323,7 @@ class S4WorldModel(nn.Module):
 
         out["depth"]["recon"] = self.reconstruct_depth(
             out["hidden"],
-            out["z_posterior"]["sample"][:, :-1],
+            out["z_posterior"]["sample"][:, 1:],
         )
 
         if compute_reconstructions:

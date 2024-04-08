@@ -26,7 +26,7 @@ def main(cfg: DictConfig) -> None:
     test_actions = from_torch_to_jax(test_actions)
 
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=4-latent_type=disc/checkpoint_4"
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-latent_type=kengrus/checkpoint_27"
     )
     params = state["params"]
 
@@ -38,7 +38,7 @@ def main(cfg: DictConfig) -> None:
         test_depth_imgs,
         test_actions,
         compute_reconstructions=True,
-        sample_mean=True,
+        sample_mean=False,
     )
 
     pred_depth = out["depth"]["pred"].mean()

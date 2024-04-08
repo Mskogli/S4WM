@@ -152,20 +152,20 @@ class Encoder(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(features=self.c_hid, kernel_size=(3, 3), strides=2)(x)
+        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=self.c_hid, kernel_size=(3, 3))(x)
+        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=2 * self.c_hid, kernel_size=(3, 3), strides=2)(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=2 * self.c_hid, kernel_size=(3, 3))(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.silu(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
         x = nn.silu(x)
         x = x.reshape(x.shape[0], x.shape[1], -1)
 
         if self.discrete_latent_state:
-            x = nn.Dense(features=512)(x)
-            x = nn.silu(x)
-            x = nn.Dense(features=4096)(x)
+            x = nn.Dense(features=self.latent_dim)(x)
         else:
             x = nn.Dense(features=2 * self.latent_dim)(x)
         return x
@@ -267,7 +267,9 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     key = random.PRNGKey(0)
-    encoder = ResNetEncoder(act_fn=nn.silu, block_class=ResNetBlock, latent_dim=512)
+    encoder = Encoder(
+        c_hid=32, embedding_dim=512, discrete_latent_state=True, latent_dim=1024
+    )
 
     random_img_batch = random.normal(key, (4, 100, 135, 240, 1))
     params = encoder.init(key, random_img_batch)

@@ -118,32 +118,36 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(self, x):
         if self.discrete_latent_state:
-            x = nn.Dense(features=512)
+            # x = nn.Dense(features=512)(x)
+            # x = nn.silu(x)
+            x = nn.Dense(features=4 * 8 * self.c_hid)(x)
             x = nn.silu(x)
-            x = nn.Dense(features=8 * 15 * self.c_hid)(x)
-            x = nn.silu(x)
+            x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
         else:
-            x = nn.Dense(features=8 * 15 * self.c_hid)(x)
+            x = nn.Dense(features=4 * 8 * self.c_hid)(x)
             x = nn.silu(x)
+            x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
 
-        x = x.reshape(x.shape[0], x.shape[1], 8, 15, -1)
-
         x = nn.ConvTranspose(
-            features=2 * self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(2, 2)
+            features=2 * self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(2, 2)
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=2 * self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(2, 1)
+            features=2 * self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(2, 1)
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=self.c_hid, kernel_size=(3, 3), strides=(2, 2), padding=(1, 1)
+            features=self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(3, 2)
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=self.c_out, kernel_size=(3, 3), strides=(2, 2), padding=(0, 1)
+            features=self.c_out, kernel_size=(4, 4), strides=(2, 2), padding=(2, 2)
         )(x)
-        x = nn.sigmoid(jnp.squeeze(x[:, :, :, :-1], axis=-1))
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=self.c_out, kernel_size=(4, 4), strides=(2, 2), padding="SAME"
+        )(x)
+        x = nn.sigmoid(jnp.squeeze(x[:, :, :-1, :], axis=-1))
         return x
 
 
