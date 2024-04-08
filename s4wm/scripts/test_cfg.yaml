@@ -2,11 +2,11 @@ dataset: depth_dataset
 seed: 1
 
 wm:
-  latent_dim: 4096
+  latent_dim: 1024
   num_actions: 4
   alpha: 0.80
   beta_rec: 1.0
-  beta_kl: 1.0
+  beta_kl: 0.2
   discrete_latent_state: True
 
 model:
@@ -21,7 +21,7 @@ model:
 train:
   epochs: 30
   bsz: 4
-  lr: 0.0001
+  lr: 0.0005
   lr_schedule: True
   weight_decay: 0.05
   checkpoint: true

@@ -9,27 +9,26 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 if __name__ == "__main__":
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "True"
 
     NUM_ENVS = 1
 
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-128x32_latent-3_blocks/checkpoint_19",
-        d_latent=4096,
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0005-bsz=4-latent_type=kengrus/checkpoint_0",
+        d_latent=1024,
         d_pssm_blocks=1024,
-        num_pssm_blocks=3,
+        num_pssm_blocks=1,
     )
 
     init_depth = torch.zeros(
         (NUM_ENVS, 1, 135, 240, 1), requires_grad=False, device="cuda:0"
     )
-    init_actions = torch.ones((NUM_ENVS, 1, 20), requires_grad=False, device="cuda:0")
-    latent = jnp.zeros((NUM_ENVS, 1, 4096))
+    init_actions = torch.ones((NUM_ENVS, 1, 4), requires_grad=False, device="cuda:0")
+    latent = jnp.zeros((NUM_ENVS, 1, 1024))
 
-    print("batman")
     fwp_times = []
-    for _ in range(200):
+    for _ in range(2000):
         start = time.time()
         _ = torch_wm.forward(init_depth, init_actions, latent)
         end = time.time()

@@ -69,16 +69,20 @@ class S4WorldModel(nn.Module):
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
         )
         self.statistic_heads = {
-            "embedding": lambda x: x,
-            # "embedding": nn.Sequential(
-            #     [
-            #         nn.Dense(features=(self.latent_dim // 2)),
-            #         nn.silu,
-            #         nn.Dense(features=self.latent_dim),
-            #     ]
-            # ),
+            # "embedding": lambda x: x,
+            "embedding": nn.Sequential(
+                [
+                    nn.Dense(features=(self.latent_dim)),
+                    nn.silu,
+                    nn.Dense(features=self.latent_dim),
+                ]
+            ),
             "hidden": nn.Sequential(
                 [
+                    nn.Dense(features=self.S4_config["d_model"]),
+                    nn.silu,
+                    nn.Dense(features=self.S4_config["d_model"]),
+                    nn.silu,
                     nn.Dense(features=self.S4_config["d_model"]),
                     nn.silu,
                     nn.Dense(features=self.latent_dim),
@@ -87,7 +91,7 @@ class S4WorldModel(nn.Module):
         }
         self.input_head = nn.Sequential(
             [
-                nn.Dense(features=2 * self.S4_config["d_model"]),
+                nn.Dense(features=self.S4_config["d_model"]),
                 nn.silu,
                 nn.Dense(features=self.S4_config["d_model"]),
             ]
@@ -181,7 +185,7 @@ class S4WorldModel(nn.Module):
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
         reduction: str = "mean",  # Mean or sum
-        clip: bool = True,
+        clip: bool = False,
         free: float = 1.0,
     ) -> jnp.ndarray:
 
@@ -270,11 +274,12 @@ class S4WorldModel(nn.Module):
     def encode_and_step(
         self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
     ) -> Tuple[jnp.ndarray]:
-        z, _ = self.get_latent_posteriors_from_images(image, False)
-        # h = self.PSSM_blocks(
-        #     self.input_head(jnp.concatenate((latent, action), axis=-1))
-        # )
-        return z, 0
+        embedding = self.encoder(image)
+        z, _ = self.get_latent_posteriors_from_images(embedding, False)
+        h = self.PSSM_blocks(
+            self.input_head(jnp.concatenate((latent, action), axis=-1))
+        )
+        return z, h
 
     def __call__(
         self,
@@ -296,13 +301,6 @@ class S4WorldModel(nn.Module):
         out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
             self.get_latent_posteriors_from_images(embeddings, sample_mean)
         )
-        shapes = out["z_posterior"]["sample"].shape
-        # embeddings = self.get_embedding(
-        #     out["z_posterior"]["sample"][:, :].reshape(shapes[0], shapes[1], 32, 32)
-        # ).reshape(shapes[0], shapes[1], -1)
-        # embeddings_2 = self.get_embedding_2(
-        #     out["z_posterior"]["sample"][:, :].reshape(shapes[0], shapes[1], 128, 32)
-        # ).reshape(shapes[0], shapes[1], -1)
 
         # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
         g = self.input_head(
@@ -497,9 +495,9 @@ def _jitted_forward(
 ) -> jax.Array:
     return model.apply(
         {
-            "params": sg(params),
-            "cache": sg(cache),
-            "prime": sg(prime),
+            "params": params,
+            "cache": cache,
+            "prime": prime,
         },
         image,
         action,
@@ -515,8 +513,8 @@ class S4WMTorchWrapper:
         batch_dim: int,
         ckpt_path: str,
         d_latent: int = 128,
-        d_pssm_blocks: int = 512,
-        d_ssm: int = 128,
+        d_pssm_blocks: int = 1024,
+        d_ssm: int = 64,
         num_pssm_blocks: int = 4,
         discrete_latent_state: bool = True,
         l_max: int = 99,
@@ -534,7 +532,6 @@ class S4WMTorchWrapper:
                 }
             ),
             training=False,
-            process_in_chunks=False,
             rnn_mode=True,
             discrete_latent_state=discrete_latent_state,
             **DictConfig(
@@ -547,8 +544,8 @@ class S4WMTorchWrapper:
         self.params = self.model.restore_checkpoint_state(ckpt_path)["params"]
 
         init_depth = jnp.zeros((batch_dim, 1, 135, 240, 1))
-        init_actions = jnp.zeros((batch_dim, 1, 20))
-        init_latent = jnp.zeros((batch_dim, 1, 4096))
+        init_actions = jnp.zeros((batch_dim, 1, 4))
+        init_latent = jnp.zeros((batch_dim, 1, 1024))
 
         self.rnn_cache, self.prime = self.model.init_RNN_mode(
             self.params,
@@ -557,15 +554,15 @@ class S4WMTorchWrapper:
         )
 
         self.rnn_cache, self.prime, self.params = (
-            sg(self.rnn_cache),
-            sg(self.prime),
-            sg(self.params),
+            self.rnn_cache,
+            self.prime,
+            self.params,
         )
 
         # Force compilation
         _ = _jitted_forward(
             self.model,
-            sg(self.params),
+            self.params,
             self.rnn_cache,
             self.prime,
             init_depth,
@@ -583,7 +580,7 @@ class S4WMTorchWrapper:
         )
         out, variables = _jitted_forward(
             self.model,
-            sg(self.params),
+            self.params,
             self.rnn_cache,
             self.prime,
             jax_imgs,
