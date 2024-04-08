@@ -185,7 +185,7 @@ class S4WorldModel(nn.Module):
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
         reduction: str = "mean",  # Mean or sum
-        clip: bool = False,
+        clip: bool = True,
         free: float = 1.0,
     ) -> jnp.ndarray:
 
@@ -246,7 +246,7 @@ class S4WorldModel(nn.Module):
         x: jnp.ndarray,
         statistics_head: str,
         discrete: bool = False,
-        unimix: float = 0.01,
+        unimix: float = 0.02,
     ) -> Dict[str, jnp.ndarray]:
 
         if discrete:
@@ -289,6 +289,9 @@ class S4WorldModel(nn.Module):
         sample_mean: bool = False,
         train: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 tuple
+        shapes = imgs.shape
+        multi_step = shapes[1] > 1
+
         out = {
             "z_posterior": {"dist": None, "sample": None},
             "z_prior": {"dist": None, "sample": None},
@@ -306,7 +309,11 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    out["z_posterior"]["sample"][:, :-1],
+                    (
+                        out["z_posterior"]["sample"][:, :-1]
+                        if multi_step
+                        else out["z_posterior"]["sample"][:, :]
+                    ),
                     actions,
                 ),
                 axis=-1,
@@ -321,7 +328,11 @@ class S4WorldModel(nn.Module):
 
         out["depth"]["recon"] = self.reconstruct_depth(
             out["hidden"],
-            out["z_posterior"]["sample"][:, 1:],
+            (
+                out["z_posterior"]["sample"][:, 1:]
+                if multi_step
+                else out["z_posterior"]["sample"][:, :]
+            ),
         )
 
         if compute_reconstructions:
@@ -399,21 +410,13 @@ class S4WorldModel(nn.Module):
         imgs,
         actions,
         compute_reconstructions: bool = False,
-        single_step: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 Tuple
         assert self.rnn_mode
-        if not single_step:
-            return self.__call__(
-                imgs,
-                actions,
-                compute_reconstructions,
-            )
-        else:
-            return self.forward_single_step(
-                imgs,
-                actions,
-                compute_reconstructions,
-            )
+        return self.__call__(
+            imgs,
+            actions,
+            compute_reconstructions,
+        )
 
     def forward_CNN_mode(self, imgs, actions, compute_reconstructions: bool = False):
         return self._call_(actions, imgs, compute_reconstructions)
