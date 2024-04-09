@@ -88,7 +88,7 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(1000), optax.adamw(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(optax.clip(5), optax.adamw(learning_rate=schedule_fn(v * lr)))
         for k, v in lr_layer.items()
     }
 
@@ -316,7 +316,7 @@ def train(
 
         if val_loss < best_loss:
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=kengrus"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=kengrus-2-blocks"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,

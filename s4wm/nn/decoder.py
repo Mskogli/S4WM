@@ -118,9 +118,7 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(self, x):
         if self.discrete_latent_state:
-            # x = nn.Dense(features=512)(x)
-            # x = nn.silu(x)
-            x = nn.Dense(features=4 * 8 * self.c_hid)(x)
+            x = nn.Dense(features=4 * 8 * self.c_hid)(x)  # 1xc_hid for 2048 model
             x = nn.silu(x)
             x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
         else:
@@ -129,23 +127,48 @@ class Decoder(nn.Module):
             x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
 
         x = nn.ConvTranspose(
-            features=2 * self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(2, 2)
+            features=2 * self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=2 * self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(2, 1)
+            features=2 * self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 1),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=self.c_hid, kernel_size=(4, 4), strides=(2, 2), padding=(3, 2)
+            features=self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(3, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=self.c_out, kernel_size=(4, 4), strides=(2, 2), padding=(2, 2)
+            features=self.c_out,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
         )(x)
         x = nn.silu(x)
         x = nn.ConvTranspose(
-            features=self.c_out, kernel_size=(4, 4), strides=(2, 2), padding="SAME"
+            features=self.c_out,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding="SAME",
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
         )(x)
         x = nn.sigmoid(jnp.squeeze(x[:, :, :-1, :], axis=-1))
         return x

@@ -44,7 +44,7 @@ class S4WorldModel(nn.Module):
 
     discrete_latent_state: bool = False
     training: bool = True
-    seed: int = 47
+    seed: int = 22
 
     use_with_torch: bool = False
     rnn_mode: bool = False
@@ -69,21 +69,19 @@ class S4WorldModel(nn.Module):
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
         )
         self.statistic_heads = {
-            # "embedding": lambda x: x,
-            "embedding": nn.Sequential(
-                [
-                    nn.Dense(features=(self.latent_dim)),
-                    nn.silu,
-                    nn.Dense(features=self.latent_dim),
-                ]
-            ),
+            "embedding": lambda x: x,
+            # "embedding": nn.Sequential(
+            #     [
+            #         nn.Dense(features=self.latent_dim),
+            #         nn.silu,
+            #         nn.Dense(features=self.latent_dim),
+            #     ]
+            # ),
             "hidden": nn.Sequential(
                 [
                     nn.Dense(features=self.S4_config["d_model"]),
                     nn.silu,
-                    nn.Dense(features=self.S4_config["d_model"]),
-                    nn.silu,
-                    nn.Dense(features=self.S4_config["d_model"]),
+                    nn.Dense(features=self.S4_config["d_model"]),  # 1x 2024
                     nn.silu,
                     nn.Dense(features=self.latent_dim),
                 ]
@@ -299,45 +297,29 @@ class S4WorldModel(nn.Module):
             "hidden": None,
         }
         embeddings = self.encoder(imgs)
-
-        # Compute the latent posteriors from the input images
         out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
             self.get_latent_posteriors_from_images(embeddings, sample_mean)
         )
 
-        # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
         g = self.input_head(
             jnp.concatenate(
                 (
-                    (
-                        out["z_posterior"]["sample"][:, :-1]
-                        if multi_step
-                        else out["z_posterior"]["sample"][:, :]
-                    ),
+                    out["z_posterior"]["sample"][:, :-1],
                     actions,
                 ),
                 axis=-1,
             )
         )
         out["hidden"] = self.PSSM_blocks(g)
-
-        # Compute the latent prior distributions from the hidden state
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"], sample_mean)
         )
 
         out["depth"]["recon"] = self.reconstruct_depth(
-            out["hidden"],
-            (
-                out["z_posterior"]["sample"][:, 1:]
-                if multi_step
-                else out["z_posterior"]["sample"][:, :]
-            ),
+            out["hidden"], out["z_posterior"]["sample"][:, 1:]
         )
 
         if compute_reconstructions:
-            # Predict depth images by decoding the hidden and latent prior states
-
             out["depth"]["pred"] = self.reconstruct_depth(
                 out["hidden"], out["z_prior"]["sample"]
             )

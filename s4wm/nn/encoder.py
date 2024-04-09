@@ -143,7 +143,9 @@ class ImageEncoder(nn.Module):
         else:
             return self._downsample(imgs)
 
-
+kernel_init = (
+            glorot_uniform()
+        )
 class Encoder(nn.Module):
     c_hid: int
     embedding_dim: 512
@@ -152,15 +154,15 @@ class Encoder(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2, kernel_init=glorot_uniform(), bias_init=zeros)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.Conv(features=self.c_hid, kernel_size=(4, 4), strides=2, kernel_init=glorot_uniform(), bias_init=zeros)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2, kernel_init=glorot_uniform(), bias_init=zeros)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2, kernel_init=glorot_uniform(), bias_init=zeros)(x)
         x = nn.silu(x)
-        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2)(x)
+        x = nn.Conv(features=2 * self.c_hid, kernel_size=(4, 4), strides=2, kernel_init=glorot_uniform(), bias_init=zeros)(x)
         x = nn.silu(x)
         x = x.reshape(x.shape[0], x.shape[1], -1)
 

@@ -9,7 +9,6 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 if __name__ == "__main__":
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "True"
 
     NUM_ENVS = 1
 
