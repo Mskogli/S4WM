@@ -14,10 +14,10 @@ from s4wm.utils.dlpack import from_torch_to_jax
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
-    torch.manual_seed(0)
+    torch.manual_seed(5)
 
     _, trainloader = create_depth_dataset(batch_size=4)
     test_depth_imgs, test_actions, _ = next(iter(trainloader))
@@ -38,7 +38,7 @@ def main(cfg: DictConfig) -> None:
         test_depth_imgs,
         test_actions,
         compute_reconstructions=True,
-        sample_mean=True,
+        sample_mean=False,
     )
 
     pred_depth = out["depth"]["pred"].mean()
@@ -46,19 +46,19 @@ def main(cfg: DictConfig) -> None:
     print(pred_depth.shape)
     for i in range(99):
         plt.imsave(
-            f"imgs/pred_{i}.png", pred_depth[3, i, :].reshape(135, 240), vmin=0, vmax=1
+            f"imgs/pred_{i}.png",
+            pred_depth[3, i, :].reshape(135, 240),
+            cmap="gray",
         )
         plt.imsave(
             f"imgs/recon_{i}.png",
             recon_depth[3, i, :].reshape(135, 240),
-            vmin=0,
-            vmax=1,
+            cmap="gray",
         )
         plt.imsave(
             f"imgs/label_{i}.png",
             test_depth_imgs[3, i + 1, :].reshape(135, 240),
-            vmin=0,
-            vmax=1,
+            cmap="gray",
         )
 
 

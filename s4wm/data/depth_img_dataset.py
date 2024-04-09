@@ -17,7 +17,7 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 16000
+        self.num_trajs = 50
         self.max_depth_value = 10
         self.min_depth_value = 0.0
 

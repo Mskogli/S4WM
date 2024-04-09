@@ -18,8 +18,8 @@ if __name__ == "__main__":
     mean_kl_1 = jax.random.normal(key, (2, 100, 1024))
     mean_kl_2 = jax.random.normal(key_1, (2, 100, 1024))
 
-    onehot_logits = jax.random.normal(key, (2, 100, 32, 32))
-    onehot_logits_2 = jax.random.normal(key_1, (2, 100, 32, 32))
+    onehot_logits = jax.random.normal(key, (2, 100, 32, 128))
+    onehot_logits_2 = jax.random.normal(key_1, (2, 100, 32, 128))
 
     onehot_dist = tfd.Independent(OneHotDist(onehot_logits), 1)
     onehot_dist_2 = tfd.Independent(OneHotDist(onehot_logits_2), 1)
@@ -34,7 +34,7 @@ if __name__ == "__main__":
         mean_kl_1 + 0.1, 3 * jnp.ones_like(mean_kl_1)
     )
 
-    kl_div = dist_kl_1.kl_divergence(dist_kl_2)
+    kl_div = onehot_dist.kl_divergence(onehot_dist_2)
     print(kl_div.shape)
 
     img_dist = MSEDist(mean, 1, agg="mean")

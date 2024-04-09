@@ -10,15 +10,19 @@ from tensorflow_probability.substrates import jax as tfp
 from omegaconf import DictConfig
 
 from .decoder import ImageDecoder, Decoder
-from .encoder import ImageEncoder, Encoder, ResNetEncoder, ResNetBlock
+from .encoder import ImageEncoder, SimpleEncoder, ResNetEncoder, ResNetBlock
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg, LogCoshDist
 
 from s4wm.utils.dlpack import from_jax_to_torch, from_torch_to_jax
-from typing import Dict, Union, Tuple, Sequence
+from typing import Dict, Union, Tuple, Sequence, Literal
 
 tfd = tfp.distributions
 f32 = jnp.float32
+
+ImageDistribution = Literal["MSE", "LogCosh"]
+LatentDistribution = Literal["Gaussian", "Categorical"]
+LossReduction = Literal["sum", "mean"]
 
 
 class S4WorldModel(nn.Module):
@@ -33,30 +37,34 @@ class S4WorldModel(nn.Module):
 
     S4_config: DictConfig
 
+    seed: int = 22
+
     latent_dim: int = 128
-    hidden_dim: int = 512
     img_dim: int = 32400
-    num_actions: int = 4
+    num_classes: int = 32
+    num_modes: int = 32
 
     alpha: float = 0.8
     beta_rec: float = 1.0
     beta_kl: float = 1.0
+    kl_lower_bound: float = 1.0
 
     discrete_latent_state: bool = False
     training: bool = True
-    seed: int = 22
-
-    use_with_torch: bool = False
     rnn_mode: bool = False
-    process_in_chunks: bool = True
+    sample_mean: bool = True
+    clip_kl_loss: bool = True
 
-    image_dist_type = "MSE"
+    image_dist_type: ImageDistribution = "MSE"
+    latent_dist_type: LatentDistribution = "Gaussian"
+    loss_reduction: LossReduction = "mean"
 
     def setup(self) -> None:
         self.rng_post, self.rng_prior = jax.random.split(
             jax.random.PRNGKey(self.seed), num=2
         )
-        self.encoder = Encoder(
+
+        self.encoder = SimpleEncoder(
             embedding_dim=512,
             discrete_latent_state=self.discrete_latent_state,
             c_hid=32,
@@ -65,18 +73,19 @@ class S4WorldModel(nn.Module):
         self.decoder = Decoder(
             c_out=1, c_hid=64, discrete_latent_state=self.discrete_latent_state
         )
-        self.PSSM_blocks = S4Block(
+
+        self.S4_blocks = S4Block(
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
         )
+
         self.statistic_heads = {
-            "embedding": lambda x: x,
-            # "embedding": nn.Sequential(
-            #     [
-            #         nn.Dense(features=self.latent_dim),
-            #         nn.silu,
-            #         nn.Dense(features=self.latent_dim),
-            #     ]
-            # ),
+            "embedding": nn.Sequential(
+                [
+                    nn.Dense(features=self.latent_dim),
+                    nn.silu,
+                    nn.Dense(features=self.latent_dim),
+                ]
+            ),
             "hidden": nn.Sequential(
                 [
                     nn.Dense(features=self.S4_config["d_model"]),
@@ -87,6 +96,7 @@ class S4WorldModel(nn.Module):
                 ]
             ),
         }
+
         self.input_head = nn.Sequential(
             [
                 nn.Dense(features=self.S4_config["d_model"]),
@@ -94,8 +104,12 @@ class S4WorldModel(nn.Module):
                 nn.Dense(features=self.S4_config["d_model"]),
             ]
         )
-        self.embedding_layer = nn.Embed(32, features=5)
-        self.embedding_layer_2 = nn.Embed(32, features=5)
+
+    def get_latent_posteriors(
+        self, embedding: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        post_stats = self.get_statistics(x=embedding, statistics_head="embedding")
+        pass
 
     def get_latent_posteriors_from_images(
         self, embedding: jnp.ndarray, sample_mean: bool = False
@@ -159,14 +173,6 @@ class S4WorldModel(nn.Module):
         )
         return z_prior, z_prior_dist
 
-    def get_embedding(self, sample: jnp.ndarray) -> jnp.ndarray:
-        hot_indicies = jnp.argmax(sample, axis=-1)
-        return self.embedding_layer(hot_indicies)
-
-    def get_embedding_2(self, sample: jnp.ndarray) -> jnp.ndarray:
-        hot_indicies = jnp.argmax(sample, axis=-1)
-        return self.embedding_layer_2(hot_indicies)
-
     def reconstruct_depth(
         self, hidden: jnp.ndarray, embed: jnp.ndarray
     ) -> tfd.Distribution:
@@ -182,88 +188,79 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
-        reduction: str = "mean",  # Mean or sum
-        clip: bool = True,
-        free: float = 1.0,
     ) -> jnp.ndarray:
-
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
+        # in order to focus on learning the posterior rather than the prior
 
         dynamics_loss = sg(z_posterior_dist).kl_divergence(z_prior_dist)
         representation_loss = z_posterior_dist.kl_divergence(sg(z_prior_dist))
 
-        if clip:
-            dynamics_loss = jnp.maximum(dynamics_loss, free)
-            representation_loss = jnp.maximum(representation_loss, free)
+        if self.clip_kl_loss:
+            dynamics_loss = jnp.maximum(dynamics_loss, self.kl_lower_bound)
+            representation_loss = jnp.maximum(representation_loss, self.kl_lower_bound)
 
-        kl_loss = self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss
+        kl_loss = self.beta_kl * jnp.sum(
+            (self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss),
+            axis=-1,
+        )
+        recon_loss = self.beta_rec * (
+            -jnp.sum(img_prior_dist.log_prob(img_posterior.astype(f32)), axis=-1)
+        )
 
-        reconstruction_loss = -img_prior_dist.log_prob(img_posterior.astype(f32))
+        if self.loss_reduction == "mean":
+            kl_loss = kl_loss / self.num_classes
+            recon_loss = recon_loss / self.img_dim
 
-        if reduction == "mean":
-            kl_loss = self.beta_kl * jnp.sum(kl_loss / self.latent_dim, axis=-1)
-            reconstruction_loss = self.beta_rec * jnp.sum(
-                reconstruction_loss / self.img_dim, axis=-1
-            )
-        else:
-            kl_loss = self.beta_kl * jnp.sum(kl_loss, axis=-1)
-            reconstruction_loss = self.beta_rec * jnp.sum(reconstruction_loss, axis=-1)
+        total_loss = recon_loss + kl_loss
 
-        total_loss = reconstruction_loss + kl_loss
         return total_loss, (
-            reconstruction_loss,
+            recon_loss,
             kl_loss,
         )
 
-    def get_distribution_from_statistics(
-        self,
-        statistics: Union[Dict[str, jnp.ndarray], jnp.ndarray],
-        dist_type: str,
+    def get_latent_distribution(
+        self, statistics: Union[Dict[str, jnp.ndarray], jnp.ndarray]
     ) -> tfd.Distribution:
-        if dist_type == "Image":
-            mean = statistics.reshape(
-                statistics.shape[0], statistics.shape[1], -1
-            ).astype(f32)
-            img_dist = (
-                LogCoshDist(mean, 1, agg="mean")
-                if self.image_dist_type == "MSE"
-                else tfd.Independent(tfd.Normal(mean, 1), 1)
-            )
-            return img_dist
-        elif dist_type == "OneHot":
+        if self.latent_dist_type == "Categorical":
             return tfd.Independent(OneHotDist(statistics["logits"].astype(f32)), 1)
-        elif dist_type == "NormalDiag":
+        elif self.latent_dist_type == "Gaussian":
             mean = statistics["mean"]
             std = statistics["std"]
-            return tfd.Independent(tfd.Normal(mean, std), 1)
+            return tfd.MultivariateNormalDiag(mean, std)
         else:
-            raise (NotImplementedError)
+            raise NotImplementedError("Latent distribution type not defined")
+
+    def get_image_distribution(self, statistics: jnp.ndarray) -> tfd.Distribution:
+        mode = statistics.reshape(statistics.shape[0], statistics.shape[1], -1).astype(
+            f32
+        )
+        if self.image_dist_type == "MSE":
+            return MSEDist(mode, 1, agg=self.loss_reduction)
+        elif self.image_dist_type == "LogCosh":
+            return LogCoshDist(mode, 1, agg=self.loss_reduction)
+        else:
+            raise NotImplementedError("Image distribution type not defined")
 
     def get_statistics(
         self,
         x: jnp.ndarray,
         statistics_head: str,
         discrete: bool = False,
-        unimix: float = 0.02,
+        unimix: float = 0.01,
     ) -> Dict[str, jnp.ndarray]:
-
         if discrete:
             logits = self.statistic_heads[statistics_head](x)
-            logits = logits.reshape(logits.shape[0], logits.shape[1], 32, 32)
-
+            logits = logits.reshape(
+                logits.shape[0], logits.shape[1], self.num_modes, self.num_classes
+            )
             if unimix:
                 probs = jax.nn.softmax(logits, -1)
                 uniform = jnp.ones_like(probs) / probs.shape[-1]
                 probs = (1 - unimix) * probs + unimix * uniform
                 logits = jnp.log(probs)
-
             return {"logits": logits}
-
         else:
-            if statistics_head == "embedding":
-                x = x
-            else:
-                x = self.statistic_heads[statistics_head](x)
+            x = self.statistic_heads[statistics_head](x)
             mean, std = jnp.split(x, 2, -1)
             std = nn.softplus(std) + 0.1
 
@@ -274,9 +271,7 @@ class S4WorldModel(nn.Module):
     ) -> Tuple[jnp.ndarray]:
         embedding = self.encoder(image)
         z, _ = self.get_latent_posteriors_from_images(embedding, False)
-        h = self.PSSM_blocks(
-            self.input_head(jnp.concatenate((latent, action), axis=-1))
-        )
+        h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
         return z, h
 
     def __call__(
@@ -304,19 +299,28 @@ class S4WorldModel(nn.Module):
         g = self.input_head(
             jnp.concatenate(
                 (
-                    out["z_posterior"]["sample"][:, :-1],
+                    (
+                        out["z_posterior"]["sample"][:, :-1]
+                        if multi_step
+                        else out["z_posterior"]["sample"]
+                    ),
                     actions,
                 ),
                 axis=-1,
             )
         )
-        out["hidden"] = self.PSSM_blocks(g)
+        out["hidden"] = self.S4_blocks(g)
         out["z_prior"]["sample"], out["z_prior"]["dist"] = (
             self.get_latent_prior_from_hidden(out["hidden"], sample_mean)
         )
 
         out["depth"]["recon"] = self.reconstruct_depth(
-            out["hidden"], out["z_posterior"]["sample"][:, 1:]
+            out["hidden"],
+            (
+                out["z_posterior"]["sample"][:, 1:]
+                if multi_step
+                else out["z_posterior"]["sample"]
+            ),
         )
 
         if compute_reconstructions:
@@ -326,55 +330,8 @@ class S4WorldModel(nn.Module):
 
         return out
 
-    def forward_single_step(
-        self, image: jax.Array, action: jax.Array, compute_recon: bool = True
-    ) -> None:
-
-        out = {
-            "z_posterior": {"dist": None, "sample": None},
-            "z_prior": {"dist": None, "sample": None},
-            "depth": {"recon": None, "pred": None},
-            "hidden": None,
-        }
-
-        # Compute the latent posteriors from the input images
-        out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
-            self.get_latent_posteriors_from_images(image, sample_mean=True)
-        )
-
-        # Concatenate and mix the latent posteriors and the actions, compute the dynamics embedding by forward passing the stacked PSSM blocks
-        g = self.input_head(
-            jnp.concatenate(
-                (
-                    out["z_posterior"]["sample"],
-                    action,
-                ),
-                axis=-1,
-            )
-        )
-        out["hidden"] = self.PSSM_blocks(g)
-        # Compute the latent prior distributions from the hidden state
-        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-            self.get_latent_prior_from_hidden(out["hidden"], sample_mean=True)
-        )
-
-        if compute_recon:
-            # Reconstruct depth images by decoding the hidden and latent posterior states
-
-            out["depth"]["recon"] = self.reconstruct_depth(
-                out["hidden"], out["z_posterior"]["sample"]
-            )
-
-            # Predict depth images by decoding the hidden and latent prior states
-            out["depth"]["pred"] = self.reconstruct_depth(
-                out["hidden"], out["z_prior"]["sample"]
-            )
-
-        return out
-
     def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
         assert self.rnn_mode
-        print(init_imgs.shape, init_actions.shape)
         variables = self.init(jax.random.PRNGKey(0), init_imgs, init_actions)
         vars = {
             "params": params,
@@ -400,9 +357,6 @@ class S4WorldModel(nn.Module):
             compute_reconstructions,
         )
 
-    def forward_CNN_mode(self, imgs, actions, compute_reconstructions: bool = False):
-        return self._call_(actions, imgs, compute_reconstructions)
-
     def restore_checkpoint_state(self, ckpt_dir: str) -> dict:
         ckptr = orbax.checkpoint.Checkpointer(
             orbax.checkpoint.PyTreeCheckpointHandler()
@@ -419,7 +373,7 @@ class S4WorldModel(nn.Module):
             context_imgs, sample_mean=False
         )
         g = self.input_head(jnp.concatenate((posterior, context_actions), axis=-1))
-        hidden = jnp.expand_dims(self.PSSM_blocks(g)[:, -1, :], axis=1)
+        hidden = jnp.expand_dims(self.S4_blocks(g)[:, -1, :], axis=1)
         prior, _ = self.get_latent_prior_from_hidden(hidden, sample_mean=False)
         return prior, hidden
 
@@ -435,7 +389,7 @@ class S4WorldModel(nn.Module):
                 axis=-1,
             )
         )
-        hidden = self.PSSM_blocks(g)
+        hidden = self.S4_blocks(g)
         prior, _ = self.get_latent_prior_from_hidden(hidden, sample_mean=True)
         return prior, hidden
 

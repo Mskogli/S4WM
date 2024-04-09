@@ -8,15 +8,15 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 
 if __name__ == "__main__":
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
-    NUM_ENVS = 1
+    NUM_ENVS = 512
 
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0005-bsz=4-latent_type=kengrus/checkpoint_0",
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=8-latent_type=kengrus-2-blocks/checkpoint_36",
         d_latent=1024,
-        d_pssm_blocks=1024,
+        d_pssm_blocks=512,
         num_pssm_blocks=1,
     )
 
