@@ -105,82 +105,42 @@ class S4WorldModel(nn.Module):
             ]
         )
 
-    def get_latent_posteriors(
+    def compute_latent(
+        self, statistics: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, tfd.Distribution]:
+        dists = self.get_latent_distribution(statistics)
+
+        if not self.sample_mean:
+            sample = dists.sample(seed=self.rng_post)
+        else:
+            sample = dists.mode() if self.discrete_latent_state else dists.mean()
+
+        if self.discrete_latent_state:
+            sample = jax.lax.collapse(
+                sample,
+                start_dimension=2,
+                stop_dimension=4,  # Flatten sample from a categorical with shape (batch, seq_l, modes, num_classes)
+            )
+
+        return sample, dists
+
+    def compute_posteriors(
         self, embedding: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
-        post_stats = self.get_statistics(x=embedding, statistics_head="embedding")
-        pass
+        post_stats = self.get_statistics(embedding, statistics_head="embedding")
+        return self.compute_latent(post_stats)
 
-    def get_latent_posteriors_from_images(
-        self, embedding: jnp.ndarray, sample_mean: bool = False
+    def compute_priors(
+        self, hidden: jnp.ndarray
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
-        posterior_statistics = self.get_statistics(
-            x=embedding,
-            statistics_head="embedding",
-            discrete=self.discrete_latent_state,
-            unimix=0.01,
-        )
-        dist_type = "OneHot" if self.discrete_latent_state else "NormalDiag"
-        z_posterior_dist = self.get_distribution_from_statistics(
-            statistics=posterior_statistics, dist_type=dist_type
-        )
-        if not sample_mean:
-            z_posterior = z_posterior_dist.sample(seed=self.rng_post)
-        else:
-            z_posterior = (
-                z_posterior_dist.mode()
-                if self.discrete_latent_state
-                else z_posterior_dist.mean()
-            )
-
-        batch_size, seq_length = embedding.shape[:2]
-        z_posterior = (
-            z_posterior.reshape(batch_size, seq_length, self.latent_dim)
-            if self.discrete_latent_state
-            else z_posterior
-        )
-
-        return z_posterior, z_posterior_dist
-
-    def get_latent_prior_from_hidden(
-        self, hidden: jnp.ndarray, sample_mean: bool = False
-    ) -> jnp.ndarray:
-        statistics = self.get_statistics(
-            x=hidden,
-            statistics_head="hidden",
-            discrete=self.discrete_latent_state,
-            unimix=0.01,
-        )
-        dist_type = "OneHot" if self.discrete_latent_state else "NormalDiag"
-        z_prior_dist = self.get_distribution_from_statistics(
-            statistics=statistics, dist_type=dist_type
-        )
-
-        if not sample_mean:
-            z_prior = z_prior_dist.sample(seed=self.rng_prior)
-        else:
-            z_prior = (
-                z_prior_dist.mode()
-                if self.discrete_latent_state
-                else z_prior_dist.mean()
-            )
-
-        batch_size, seq_length = hidden.shape[:2]
-        z_prior = (
-            z_prior.reshape(batch_size, seq_length, self.latent_dim)
-            if self.discrete_latent_state
-            else z_prior
-        )
-        return z_prior, z_prior_dist
+        prior_stats = self.get_statistics(hidden, statistics_head="hidden")
+        return self.compute_latent(prior_stats)
 
     def reconstruct_depth(
-        self, hidden: jnp.ndarray, embed: jnp.ndarray
+        self, hidden: jnp.ndarray, latent_sample: jnp.ndarray
     ) -> tfd.Distribution:
-        x = self.decoder(jnp.concatenate((hidden, embed), axis=-1))
-        img_prior_dists = self.get_distribution_from_statistics(
-            statistics=x, dist_type="Image"
-        )
-        return img_prior_dists
+        x = self.decoder(jnp.concatenate((hidden, latent_sample), axis=-1))
+        return self.get_image_distribution(x)
 
     def compute_loss(
         self,
@@ -266,43 +226,35 @@ class S4WorldModel(nn.Module):
 
             return {"mean": mean, "std": std}
 
-    def encode_and_step(
-        self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
-    ) -> Tuple[jnp.ndarray]:
-        embedding = self.encoder(image)
-        z, _ = self.get_latent_posteriors_from_images(embedding, False)
-        h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
-        return z, h
-
     def __call__(
         self,
-        imgs: jnp.ndarray,
+        depth_imgs: jnp.ndarray,
         actions: jnp.ndarray,
-        compute_reconstructions: bool = False,
-        sample_mean: bool = False,
-        train: bool = False,
+        reconstruct_priors: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 tuple
-        shapes = imgs.shape
-        multi_step = shapes[1] > 1
-
         out = {
-            "z_posterior": {"dist": None, "sample": None},
+            "z_post": {"dist": None, "sample": None},
             "z_prior": {"dist": None, "sample": None},
             "depth": {"recon": None, "pred": None},
             "hidden": None,
         }
-        embeddings = self.encoder(imgs)
-        out["z_posterior"]["sample"], out["z_posterior"]["dist"] = (
-            self.get_latent_posteriors_from_images(embeddings, sample_mean)
+
+        multi_step = depth_imgs.shapes[1] > 1
+
+        # Compute low dimensional embedding from depth images and the latent posteriors from the embeddings
+        embeddings = self.encoder(depth_imgs)
+        out["z_post"]["sample"], out["z_post"]["dist"] = self.compute_posteriors(
+            embeddings
         )
 
+        # Concatenate and mix the latent posteriors and actions before processing trough the S4 blocks
         g = self.input_head(
             jnp.concatenate(
                 (
                     (
-                        out["z_posterior"]["sample"][:, :-1]
+                        out["z_post"]["sample"][:, :-1]
                         if multi_step
-                        else out["z_posterior"]["sample"]
+                        else out["z_post"]["sample"]
                     ),
                     actions,
                 ),
@@ -310,10 +262,13 @@ class S4WorldModel(nn.Module):
             )
         )
         out["hidden"] = self.S4_blocks(g)
-        out["z_prior"]["sample"], out["z_prior"]["dist"] = (
-            self.get_latent_prior_from_hidden(out["hidden"], sample_mean)
+
+        # Compute the latent priors from the final hidden state of the sequence model
+        out["z_prior"]["sample"], out["z_prior"]["dist"] = self.compute_priors(
+            out["hidden"]
         )
 
+        # Reconstruct depth images from the latent posteriors and the hidden state -> the reconstruction is conditioned on the history
         out["depth"]["recon"] = self.reconstruct_depth(
             out["hidden"],
             (
@@ -323,12 +278,23 @@ class S4WorldModel(nn.Module):
             ),
         )
 
-        if compute_reconstructions:
+        if reconstruct_priors:
             out["depth"]["pred"] = self.reconstruct_depth(
                 out["hidden"], out["z_prior"]["sample"]
             )
 
         return out
+
+    def encode_and_step(
+        self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
+    ) -> Tuple[jnp.ndarray, ...]:  # 2 Tuple
+        embedding = self.encoder(image)
+        z, _ = self.compute_posteriors(embedding)
+        g = self.input_head(jnp.concatenate(latent, action), axis=-1)
+        h = self.S4_blocks(g)
+        return z, h
+
+    # TODO: everything below here needs a refactoring pass
 
     def init_RNN_mode(self, params, init_imgs, init_actions) -> None:
         assert self.rnn_mode
