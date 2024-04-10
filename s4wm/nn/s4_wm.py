@@ -26,21 +26,9 @@ LossReduction = Literal["sum", "mean"]
 
 
 class S4WorldModel(nn.Module):
-    """Structured State Space Sequence (S4) based world model
-
-    Args:
-        nn (_type_): _description_
-
-    Returns:
-        _type_: _description_
-    """
-
     S4_config: DictConfig
 
-    seed: int = 22
-
     latent_dim: int = 128
-    img_dim: int = 32400
     num_classes: int = 32
     num_modes: int = 32
 
@@ -49,10 +37,9 @@ class S4WorldModel(nn.Module):
     beta_kl: float = 1.0
     kl_lower_bound: float = 1.0
 
-    discrete_latent_state: bool = False
     training: bool = True
     rnn_mode: bool = False
-    sample_mean: bool = True
+    sample_mean: bool = False
     clip_kl_loss: bool = True
 
     image_dist_type: ImageDistribution = "MSE"
@@ -60,9 +47,8 @@ class S4WorldModel(nn.Module):
     loss_reduction: LossReduction = "mean"
 
     def setup(self) -> None:
-        self.rng_post, self.rng_prior = jax.random.split(
-            jax.random.PRNGKey(self.seed), num=2
-        )
+        self.rng_post, self.rng_prior = jax.random.split(jax.random.PRNGKey(0), num=2)
+        self.discrete_latent_state = self.image_dist_type == "Categorical"
 
         self.encoder = SimpleEncoder(
             embedding_dim=512,
@@ -169,7 +155,6 @@ class S4WorldModel(nn.Module):
 
         if self.loss_reduction == "mean":
             kl_loss = kl_loss / self.num_classes
-            recon_loss = recon_loss / self.img_dim
 
         total_loss = recon_loss + kl_loss
 

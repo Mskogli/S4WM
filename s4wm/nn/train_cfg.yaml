@@ -1,13 +1,19 @@
 dataset: depth_dataset
-seed: 1
+seed: 72
 
 wm:
+  rnn_mode: False
+  sample_mean: False
+  image_dist_type: "MSE"
+  latent_dist_type: "Categorical"
   latent_dim: 1024
-  num_actions: 4
   alpha: 0.80
   beta_rec: 1.0
   beta_kl: 0.1
-  discrete_latent_state: True
+  clip_kl_loss: True
+  kl_lower_bound: 1.0
+  loss_reduction: "sum"
+
 
 model:
   d_model: 512

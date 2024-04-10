@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 
 from flax import linen as nn
@@ -106,8 +105,6 @@ class SequenceBlock(nn.Module):
         self.seq = S4Layer(**self.layer, rnn_mode=self.rnn_mode)
         self.norm = nn.LayerNorm()
         self.out = nn.Dense(self.d_model)
-        if self.glu:
-            self.out2 = nn.Dense(self.d_model)
         self.drop = nn.Dropout(
             self.dropout,
             broadcast_dims=[0],
@@ -121,7 +118,8 @@ class SequenceBlock(nn.Module):
         x = self.seq(x)
         x = self.drop(nn.gelu(x))
         if self.glu:
-            x = self.out(x) * jax.nn.sigmoid(self.out2(x))
+            x = self.out(x)
+            x = nn.glu(x)
         else:
             x = self.out(x)
         x = skip + self.drop(x)
