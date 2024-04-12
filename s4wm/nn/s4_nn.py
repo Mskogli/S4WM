@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import jax
 
 from flax import linen as nn
 from jax.nn.initializers import normal
@@ -105,6 +106,8 @@ class SequenceBlock(nn.Module):
         self.seq = S4Layer(**self.layer, rnn_mode=self.rnn_mode)
         self.norm = nn.LayerNorm()
         self.out = nn.Dense(self.d_model)
+        if self.glu:
+            self.out2 = nn.Dense(self.d_model)
         self.drop = nn.Dropout(
             self.dropout,
             broadcast_dims=[0],
@@ -112,14 +115,14 @@ class SequenceBlock(nn.Module):
         )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        print(x.shape)
         skip = x
         if self.prenorm:
             x = self.norm(x)
         x = self.seq(x)
         x = self.drop(nn.gelu(x))
         if self.glu:
-            x = self.out(x)
-            x = nn.glu(x)
+            x = self.out(x) * jax.nn.sigmoid(self.out2(x))
         else:
             x = self.out(x)
         x = skip + self.drop(x)

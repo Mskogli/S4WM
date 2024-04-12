@@ -69,8 +69,7 @@ class ResNetBlock(nn.Module):
     subsample: bool = False  # If True, we apply a stride inside F
 
     @nn.compact
-    def __call__(self, x, train=True):
-        # Network representing F
+    def __call__(self, x):
         z = nn.Conv(
             self.c_out,
             kernel_size=(2, 2),
@@ -78,7 +77,6 @@ class ResNetBlock(nn.Module):
             kernel_init=resnet_kernel_init,
             use_bias=False,
         )(x)
-        z = nn.BatchNorm()(z, use_running_average=not train)
         z = self.act_fn(z)
         z = nn.Conv(
             self.c_out,
@@ -86,7 +84,6 @@ class ResNetBlock(nn.Module):
             kernel_init=resnet_kernel_init,
             use_bias=False,
         )(z)
-        z = nn.BatchNorm()(z, use_running_average=not train)
         if self.subsample:
             x = nn.Conv(
                 self.c_out,
@@ -101,37 +98,45 @@ class ResNetBlock(nn.Module):
 
 class ResNetEncoder(nn.Module):
     act_fn: callable
-    block_class: nn.Module
-    latent_dim: int
-    num_blocks: tuple = (0, 1, 1)
-    c_hidden: tuple = (16, 16, 32)
+    block_class: nn.Module = ResNetBlock
+    num_blocks: tuple = (1, 1, 1)
+    c_hidden: tuple = (16, 32, 32)
 
     @nn.compact
-    def __call__(self, x, train=True):
+    def __call__(self, x):
         # A first convolution on the original image to scale up the channel size
         x = nn.Conv(
             self.c_hidden[0],
             kernel_size=(3, 3),
+            strides=(2, 2),
             kernel_init=resnet_kernel_init,
             use_bias=False,
         )(x)
+        x = self.act_fn(x)
+        x = nn.Conv(
+            self.c_hidden[0],
+            kernel_size=(3, 3),
+            strides=(2, 2),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(x)
+
         if (
             self.block_class == ResNetBlock
         ):  # If pre-activation block, we do not apply non-linearities yet
-            x = nn.BatchNorm()(x, use_running_average=not train)
             x = self.act_fn(x)
 
         # Creating the ResNet blocks
         for block_idx, block_count in enumerate(self.num_blocks):
             for bc in range(block_count):
                 # Subsample the first block of each group, except the very first one.
-                subsample = bc == 0 and block_idx > 0
+                subsample = True
                 # ResNet block
                 x = self.block_class(
                     c_out=self.c_hidden[block_idx],
                     act_fn=self.act_fn,
                     subsample=subsample,
-                )(x, train=train)
+                )(x)
 
         # Mapping to classification output
         x = x.reshape(x.shape[0], x.shape[1], -1)
@@ -150,19 +155,21 @@ def jitted_forward(model, params, image):
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     key = random.PRNGKey(0)
-    encoder = SimpleEncoder(
-        c_hid=32, embedding_dim=512, discrete_latent_state=True, latent_dim=1024
-    )
-
-    random_img_batch = random.normal(key, (4, 100, 135, 240, 1))
+    encoder = ResNetEncoder(act_fn=nn.silu, block_class=ResNetBlock)
+    random_img_batch = random.normal(key, (1, 1, 135, 240, 1))
     params = encoder.init(key, random_img_batch)
-    output, _ = encoder.apply(
-        jax.lax.stop_gradient(params), random_img_batch, mutable=["batch_stats"]
-    )
-    print(
-        "Output shape: ",
-        output.shape,
-    )
+    output = encoder.apply(params, random_img_batch)
+
+    import time
+
+    fwp_times = []
+    for _ in range(2000):
+        start = time.time()
+        _ = jitted_forward(encoder, params["params"], random_img_batch)
+        end = time.time()
+        print(end - start)
+        fwp_times.append(end - start)
+    fwp_times = jnp.array(fwp_times)

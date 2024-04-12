@@ -64,7 +64,6 @@ def create_train_state(
         {"params": init_rng, "dropout": dropout_rng},
         init_depth,
         init_actions,
-        compute_reconstructions=False,
     )
 
     params = parameters["params"]
@@ -88,13 +87,19 @@ def create_train_state(
         lr_layer = {}
 
     optimizers = {
-        k: optax.chain(optax.clip(5), optax.adamw(learning_rate=schedule_fn(v * lr)))
+        k: optax.chain(
+            optax.clip_by_global_norm(1000),
+            optax.adamw(learning_rate=schedule_fn(v * lr), weight_decay=weight_decay),
+        )
         for k, v in lr_layer.items()
     }
 
-    optimizers["__default__"] = optax.adamw(
-        learning_rate=schedule_fn(lr),
-        weight_decay=weight_decay,
+    optimizers["__default__"] = optax.chain(
+        optax.clip_by_global_norm(1000),
+        optax.adamw(
+            learning_rate=schedule_fn(lr),
+            weight_decay=weight_decay,
+        ),
     )
     name_map = map_nested_fn(lambda k, _: k if k in lr_layer else "__default__")
     tx = optax.multi_transform(optimizers, name_map)
@@ -128,9 +133,12 @@ def create_train_state(
         )
 
 
-def train_epoch(state, rng, model_cls, trainloader):
+def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
     model = model_cls(training=True)
     batch_losses = []
+
+    if beta_warmup:
+        beta_schedule = [calculate_cyclical_lr(i, 1857, 1, 0) for i in range(1857)]
 
     for batch_depth, batch_actions, batch_labels in tqdm(trainloader):
         rng, drop_rng = jax.random.split(rng)
@@ -142,6 +150,7 @@ def train_epoch(state, rng, model_cls, trainloader):
             from_torch_to_jax(batch_actions),
             from_torch_to_jax(batch_labels),
             model,
+            1,
         )
         batch_losses.append(batch_loss)
 
@@ -172,7 +181,9 @@ def validate(state, model_cls, testloader):
 
 
 @partial(jax.jit, static_argnums=5)
-def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
+def train_step(
+    state, rng, batch_depth, batch_actions, batch_depth_labels, model, beta_rate=1
+):
 
     @jax.jit
     def loss_fn(params):
@@ -181,30 +192,25 @@ def train_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model
         if state.batch_stats is not None:
             out, updates = model.apply(
                 {"params": params, "batch_stats": state.batch_stats},
-                imgs=batch_depth,
+                depth_imgs=batch_depth,
                 actions=batch_actions,
-                compute_reconstructions=False,
-                sample_mean=False,
-                train=True,
                 rngs={"dropout": rng},
                 mutable=["batch_stats"],
             )
         else:
             out = model.apply(
                 {"params": params},
-                imgs=batch_depth,
+                depth_imgs=batch_depth,
                 actions=batch_actions,
-                compute_reconstructions=False,
-                sample_mean=False,
-                train=True,
                 rngs={"dropout": rng},
             )
 
         loss, (recon_loss, kl_loss) = model.compute_loss(
             img_prior_dist=out["depth"]["recon"],
             img_posterior=batch_depth_labels,
-            z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
+            z_posterior_dist=out["z_post"]["dist"][:, 1:],
             z_prior_dist=out["z_prior"]["dist"],
+            beta_rate=beta_rate,
         )
 
         return np.mean(loss), (
@@ -230,24 +236,18 @@ def eval_step(state, batch_depth, batch_actions, batch_depth_labels, model):
             {"params": state.params, "batch_stats": state.batch_stats},
             batch_depth,
             batch_actions,
-            compute_reconstructions=False,
-            sample_mean=False,
-            train=False,
         )
     else:
         out = model.apply(
             {"params": state.params},
             batch_depth,
             batch_actions,
-            compute_reconstructions=False,
-            sample_mean=False,
-            train=False,
         )
 
     loss, _ = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
         img_posterior=batch_depth_labels,
-        z_posterior_dist=out["z_posterior"]["dist"][:, 1:],
+        z_posterior_dist=out["z_post"]["dist"][:, 1:],
         z_prior_dist=out["z_prior"]["dist"],
     )
 
@@ -300,10 +300,7 @@ def train(
         print(f"[*] Starting Training Epoch {epoch + 1}...")
 
         state, train_loss = train_epoch(
-            state,
-            train_rng,
-            model_cls,
-            trainloader,
+            state, train_rng, model_cls, trainloader, beta_warmup=True
         )
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
@@ -331,7 +328,6 @@ def train(
         if wandb is not None:
             wandb.log(
                 {
-                    "train/loss": train_loss,
                     "val/loss": val_loss,
                 },
                 step=epoch,
@@ -342,7 +338,7 @@ def train(
 
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     print(OmegaConf.to_yaml(cfg))
 
@@ -354,6 +350,33 @@ def main(cfg: DictConfig) -> None:
         wandb.init(**wandb_cfg, config=OmegaConf.to_container(cfg, resolve=True))
 
     train(**cfg)
+
+
+def calculate_cyclical_lr(iteration, total_steps, num_cycles, hold_fraction=0.5):
+    step_size, hold_steps = calculate_step_size_and_hold_steps(
+        total_steps, num_cycles, hold_fraction
+    )
+
+    cycle = iteration // (step_size + hold_steps)
+
+    cycle_pos = iteration - (cycle * (step_size + hold_steps))
+
+    if cycle_pos < step_size:
+        return cycle_pos / step_size
+    elif cycle_pos < step_size + hold_steps:
+        return 1.0
+    else:
+        return 0.0
+
+
+def calculate_step_size_and_hold_steps(total_steps, num_cycles, hold_fraction=0.5):
+    hold_fraction = min(max(hold_fraction, 0), 1)
+    steps_per_cycle = total_steps / num_cycles
+
+    hold_steps = int(steps_per_cycle * hold_fraction)
+    step_size = steps_per_cycle - hold_steps
+
+    return step_size, hold_steps
 
 
 if __name__ == "__main__":

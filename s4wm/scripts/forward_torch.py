@@ -8,16 +8,17 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 
 if __name__ == "__main__":
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-    NUM_ENVS = 512
-
+    NUM_ENVS = 256
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=8-latent_type=kengrus-2-blocks/checkpoint_36",
+        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0003-bsz=8-latent_type=kengrus-2-blocks/checkpoint_39",
         d_latent=1024,
         d_pssm_blocks=512,
-        num_pssm_blocks=1,
+        num_pssm_blocks=3,
+        d_ssm=100,
     )
 
     init_depth = torch.zeros(

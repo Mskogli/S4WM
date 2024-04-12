@@ -31,8 +31,8 @@ def calculate_step_size_and_hold_steps(total_steps, num_cycles, hold_fraction=0.
 
 # Example usage and plot
 total_training_steps = 40000
-num_cycles = 4
-hold_fraction = 0.65
+num_cycles = 1
+hold_fraction = 0.00
 
 # Calculate learning rates for each iteration
 learning_rates = [

@@ -9,8 +9,8 @@ from flax import linen as nn
 from tensorflow_probability.substrates import jax as tfp
 from omegaconf import DictConfig
 
-from .decoder import ImageDecoder, Decoder
-from .encoder import ImageEncoder, SimpleEncoder, ResNetEncoder, ResNetBlock
+from .decoder import ImageDecoder, Decoder, ResNetDecoder, ResNetBlockDecoder
+from .encoder import SimpleEncoder, ResNetEncoder, ResNetBlock
 from .s4_nn import S4Block
 from .dists import OneHotDist, MSEDist, sg, LogCoshDist
 
@@ -38,27 +38,22 @@ class S4WorldModel(nn.Module):
     kl_lower_bound: float = 1.0
 
     training: bool = True
+    beta_warmup: bool = True
+
     rnn_mode: bool = False
     sample_mean: bool = False
     clip_kl_loss: bool = True
 
     image_dist_type: ImageDistribution = "MSE"
-    latent_dist_type: LatentDistribution = "Gaussian"
+    latent_dist_type: LatentDistribution = "Categorical"
     loss_reduction: LossReduction = "mean"
 
     def setup(self) -> None:
         self.rng_post, self.rng_prior = jax.random.split(jax.random.PRNGKey(0), num=2)
-        self.discrete_latent_state = self.image_dist_type == "Categorical"
+        self.discrete_latent_state = self.latent_dist_type == "Categorical"
 
-        self.encoder = SimpleEncoder(
-            embedding_dim=512,
-            discrete_latent_state=self.discrete_latent_state,
-            c_hid=32,
-            latent_dim=self.latent_dim,
-        )
-        self.decoder = Decoder(
-            c_out=1, c_hid=64, discrete_latent_state=self.discrete_latent_state
-        )
+        self.encoder = ResNetEncoder(act_fn=nn.silu)
+        self.decoder = ResNetDecoder(act_fn=nn.silu)
 
         self.S4_blocks = S4Block(
             **self.S4_config, rnn_mode=self.rnn_mode, training=self.training
@@ -90,6 +85,11 @@ class S4WorldModel(nn.Module):
                 nn.Dense(features=self.S4_config["d_model"]),
             ]
         )
+
+        self.beta_warmup_schedule = [
+            self.calculate_cyclical_lr(i, 1857, 1, 0) for i in range(1700)
+        ]
+        self.beta_warmup_index = 0
 
     def compute_latent(
         self, statistics: jnp.ndarray
@@ -134,6 +134,7 @@ class S4WorldModel(nn.Module):
         img_posterior: jnp.ndarray,
         z_posterior_dist: tfd.Distribution,
         z_prior_dist: tfd.Distribution,
+        beta_rate: int = 1,
     ) -> jnp.ndarray:
         # Compute the KL loss with KL balancing https://arxiv.org/pdf/2010.02193.pdf
         # in order to focus on learning the posterior rather than the prior
@@ -145,9 +146,13 @@ class S4WorldModel(nn.Module):
             dynamics_loss = jnp.maximum(dynamics_loss, self.kl_lower_bound)
             representation_loss = jnp.maximum(representation_loss, self.kl_lower_bound)
 
-        kl_loss = self.beta_kl * jnp.sum(
-            (self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss),
-            axis=-1,
+        kl_loss = (
+            beta_rate
+            * self.beta_kl
+            * jnp.sum(
+                (self.alpha * dynamics_loss + (1 - self.alpha) * representation_loss),
+                axis=-1,
+            )
         )
         recon_loss = self.beta_rec * (
             -jnp.sum(img_prior_dist.log_prob(img_posterior.astype(f32)), axis=-1)
@@ -162,6 +167,35 @@ class S4WorldModel(nn.Module):
             recon_loss,
             kl_loss,
         )
+
+    def calculate_cyclical_lr(
+        self, iteration, total_steps, num_cycles, hold_fraction=0.5
+    ):
+        step_size, hold_steps = self.calculate_step_size_and_hold_steps(
+            total_steps, num_cycles, hold_fraction
+        )
+
+        cycle = iteration // (step_size + hold_steps)
+
+        cycle_pos = iteration - (cycle * (step_size + hold_steps))
+
+        if cycle_pos < step_size:
+            return cycle_pos / step_size
+        elif cycle_pos < step_size + hold_steps:
+            return 1.0
+        else:
+            return 0.0
+
+    def calculate_step_size_and_hold_steps(
+        self, total_steps, num_cycles, hold_fraction=0.5
+    ):
+        hold_fraction = min(max(hold_fraction, 0), 1)
+        steps_per_cycle = total_steps / num_cycles
+
+        hold_steps = int(steps_per_cycle * hold_fraction)
+        step_size = steps_per_cycle - hold_steps
+
+        return step_size, hold_steps
 
     def get_latent_distribution(
         self, statistics: Union[Dict[str, jnp.ndarray], jnp.ndarray]
@@ -190,10 +224,9 @@ class S4WorldModel(nn.Module):
         self,
         x: jnp.ndarray,
         statistics_head: str,
-        discrete: bool = False,
-        unimix: float = 0.01,
+        unimix: float = 0.00,
     ) -> Dict[str, jnp.ndarray]:
-        if discrete:
+        if self.discrete_latent_state:
             logits = self.statistic_heads[statistics_head](x)
             logits = logits.reshape(
                 logits.shape[0], logits.shape[1], self.num_modes, self.num_classes
@@ -224,7 +257,7 @@ class S4WorldModel(nn.Module):
             "hidden": None,
         }
 
-        multi_step = depth_imgs.shapes[1] > 1
+        multi_step = depth_imgs.shape[1] > 1
 
         # Compute low dimensional embedding from depth images and the latent posteriors from the embeddings
         embeddings = self.encoder(depth_imgs)
@@ -256,11 +289,7 @@ class S4WorldModel(nn.Module):
         # Reconstruct depth images from the latent posteriors and the hidden state -> the reconstruction is conditioned on the history
         out["depth"]["recon"] = self.reconstruct_depth(
             out["hidden"],
-            (
-                out["z_posterior"]["sample"][:, 1:]
-                if multi_step
-                else out["z_posterior"]["sample"]
-            ),
+            (out["z_post"]["sample"][:, 1:] if multi_step else out["z_post"]["sample"]),
         )
 
         if reconstruct_priors:
@@ -273,10 +302,9 @@ class S4WorldModel(nn.Module):
     def encode_and_step(
         self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray
     ) -> Tuple[jnp.ndarray, ...]:  # 2 Tuple
-        embedding = self.encoder(image)
-        z, _ = self.compute_posteriors(embedding)
-        g = self.input_head(jnp.concatenate(latent, action), axis=-1)
-        h = self.S4_blocks(g)
+        z, _ = self.compute_posteriors(self.encoder(image))
+        # embeddings = self.encoder(image)
+        h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
         return z, h
 
     # TODO: everything below here needs a refactoring pass
@@ -423,7 +451,6 @@ class S4WMTorchWrapper:
             ),
             training=False,
             rnn_mode=True,
-            discrete_latent_state=discrete_latent_state,
             **DictConfig(
                 {
                     "latent_dim": d_latent,

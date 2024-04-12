@@ -17,7 +17,7 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 50
+        self.num_trajs = 16500
         self.max_depth_value = 10
         self.min_depth_value = 0.0
 
@@ -80,7 +80,7 @@ def split_dataset(
 if __name__ == "__main__":
 
     dataset = DepthImageDataset(
-        "/home/mathias/dev/aerial_gym_simulator/aerial_gym/rl_training/rl_games/quad_depth_imgs",
+        "/home/mathias/aerial_gym_simulator/aerial_gym/rl_training/rl_games/quad_depth_imgs",
         "cuda:0",
         actions=True,
     )
