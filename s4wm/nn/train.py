@@ -53,7 +53,7 @@ def create_train_state(
     total_steps=-1,
 ):
     model = model_cls(training=True)
-    init_rng, dropout_rng = jax.random.split(rng, num=2)
+    init_rng, dropout_rng, sample_rng = jax.random.split(rng, num=3)
 
     init_depth, init_actions, _ = next(iter(trainloader))
     init_depth, init_actions = from_torch_to_jax(init_depth), from_torch_to_jax(
@@ -64,6 +64,7 @@ def create_train_state(
         {"params": init_rng, "dropout": dropout_rng},
         init_depth,
         init_actions,
+        sample_rng
     )
 
     params = parameters["params"]
@@ -137,15 +138,13 @@ def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
     model = model_cls(training=True)
     batch_losses = []
 
-    if beta_warmup:
-        beta_schedule = [calculate_cyclical_lr(i, 1857, 1, 0) for i in range(1857)]
-
     for batch_depth, batch_actions, batch_labels in tqdm(trainloader):
-        rng, drop_rng = jax.random.split(rng)
+        rng, drop_rng, sample_rng = jax.random.split(rng, num=3)
 
         state, batch_loss, recon_loss, kld_loss = train_step(
             state,
             drop_rng,
+            sample_rng,
             from_torch_to_jax(batch_depth),
             from_torch_to_jax(batch_actions),
             from_torch_to_jax(batch_labels),
@@ -154,7 +153,7 @@ def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
         )
         batch_losses.append(batch_loss)
 
-        wandb.log({"train/recon_loss": recon_loss, "train/kld_loss": kld_loss})
+        wandb.log({"train/recon_loss": recon_loss.tolist(), "train/kld_loss": kld_loss.tolist()})
 
     return (
         state,
@@ -162,7 +161,7 @@ def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
     )
 
 
-def validate(state, model_cls, testloader):
+def validate(state, rng, model_cls, testloader):
     losses = []
     model = model_cls(training=False)
 
@@ -170,6 +169,7 @@ def validate(state, model_cls, testloader):
 
         loss = eval_step(
             state,
+            rng,
             from_torch_to_jax(batch_depth),
             from_torch_to_jax(batch_actions),
             from_torch_to_jax(batch_labels),
@@ -180,12 +180,11 @@ def validate(state, model_cls, testloader):
     return np.mean(np.array(losses))
 
 
-@partial(jax.jit, static_argnums=5)
+@partial(jax.jit, static_argnums=6)
 def train_step(
-    state, rng, batch_depth, batch_actions, batch_depth_labels, model, beta_rate=1
+    state, drop_rng, sample_rng, batch_depth, batch_actions, batch_depth_labels, model, beta_rate=1
 ):
 
-    @jax.jit
     def loss_fn(params):
         out, updates = None, None
 
@@ -194,7 +193,8 @@ def train_step(
                 {"params": params, "batch_stats": state.batch_stats},
                 depth_imgs=batch_depth,
                 actions=batch_actions,
-                rngs={"dropout": rng},
+                key=sample_rng,
+                rngs={"dropout": drop_rng},
                 mutable=["batch_stats"],
             )
         else:
@@ -202,7 +202,8 @@ def train_step(
                 {"params": params},
                 depth_imgs=batch_depth,
                 actions=batch_actions,
-                rngs={"dropout": rng},
+                key=sample_rng,
+                rngs={"dropout": drop_rng},
             )
 
         loss, (recon_loss, kl_loss) = model.compute_loss(
@@ -228,20 +229,22 @@ def train_step(
     return state, loss, recon_loss, kl_loss
 
 
-@partial(jax.jit, static_argnums=4)
-def eval_step(state, batch_depth, batch_actions, batch_depth_labels, model):
+@partial(jax.jit, static_argnums=5)
+def eval_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
 
     if state.batch_stats is not None:
         out = model.apply(
             {"params": state.params, "batch_stats": state.batch_stats},
             batch_depth,
             batch_actions,
+            rng, 
         )
     else:
         out = model.apply(
             {"params": state.params},
             batch_depth,
             batch_actions,
+            rng
         )
 
     loss, _ = model.compute_loss(
@@ -266,7 +269,7 @@ def train(
     print("[*] Setting Randomness...")
 
     key = jax.random.PRNGKey(seed)
-    key, rng, train_rng = jax.random.split(key, num=3)
+    key, rng, train_rng, val_rng = jax.random.split(key, num=4)
     torch.manual_seed(0)  # For torch dataloader order
 
     # Create dataset and data loaders
@@ -305,7 +308,7 @@ def train(
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
-        val_loss = validate(state, model_cls, testloader)
+        val_loss = validate(state, val_rng, model_cls, testloader)
 
         print(f"\n=>> Epoch {epoch + 1} Metrics ===")
         print(f"\tTrain Loss: {train_loss:.5f} -- Train Loss:")
@@ -313,7 +316,7 @@ def train(
 
         if val_loss < best_loss:
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type=kengrus-2-blocks"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type={wm.latent_dist_type}"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
@@ -326,19 +329,16 @@ def train(
         print(f"\tBest Test Loss: {best_loss:.5f}")
 
         if wandb is not None:
-            wandb.log(
-                {
-                    "val/loss": val_loss,
-                },
-                step=epoch,
-            )
-            wandb.run.summary["Best Test Loss"] = best_loss
+            wandb.run.summary["Best Test Loss"] = best_loss.tolist()
             wandb.run.summary["Best Epoch"] = best_epoch
+        
+        key, train_rng, val_rng = jax.random.split(key, num=3)
 
 
 @hydra.main(version_base=None, config_path=".", config_name="train_cfg")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["XLA_CLIENT_PREALLOCATE"] = "True"
 
     print(OmegaConf.to_yaml(cfg))
 

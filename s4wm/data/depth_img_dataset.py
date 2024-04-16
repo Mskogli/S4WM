@@ -80,7 +80,7 @@ def split_dataset(
 if __name__ == "__main__":
 
     dataset = DepthImageDataset(
-        "/home/mathias/aerial_gym_simulator/aerial_gym/rl_training/rl_games/quad_depth_imgs",
+        "/home/mihir/dev-mathias/quad_depth_imgs",
         "cuda:0",
         actions=True,
     )

@@ -7,14 +7,13 @@ from s4wm.nn.s4_wm import S4WMTorchWrapper
 
 
 if __name__ == "__main__":
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-    NUM_ENVS = 256
+    NUM_ENVS = 1024
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0003-bsz=8-latent_type=kengrus-2-blocks/checkpoint_39",
+        "/home/mihir/dev-mathias/structured-state-space-wm/weights/512_resnet_encoder_decoder",
         d_latent=1024,
         d_pssm_blocks=512,
         num_pssm_blocks=3,

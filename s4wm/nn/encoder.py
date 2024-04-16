@@ -120,15 +120,11 @@ class ResNetEncoder(nn.Module):
             kernel_init=resnet_kernel_init,
             use_bias=False,
         )(x)
-
-        if (
-            self.block_class == ResNetBlock
-        ):  # If pre-activation block, we do not apply non-linearities yet
-            x = self.act_fn(x)
+        x = self.act_fn(x)
 
         # Creating the ResNet blocks
         for block_idx, block_count in enumerate(self.num_blocks):
-            for bc in range(block_count):
+            for _ in range(block_count):
                 # Subsample the first block of each group, except the very first one.
                 subsample = True
                 # ResNet block

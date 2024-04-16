@@ -1,4 +1,5 @@
 import jax
+import jax.prng
 import orbax
 import jax.numpy as jnp
 import orbax.checkpoint
@@ -92,12 +93,12 @@ class S4WorldModel(nn.Module):
         self.beta_warmup_index = 0
 
     def compute_latent(
-        self, statistics: jnp.ndarray
+        self, statistics: jnp.ndarray, rng
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         dists = self.get_latent_distribution(statistics)
 
         if not self.sample_mean:
-            sample = dists.sample(seed=self.rng_post)
+            sample = dists.sample(seed=rng)
         else:
             sample = dists.mode() if self.discrete_latent_state else dists.mean()
 
@@ -111,16 +112,16 @@ class S4WorldModel(nn.Module):
         return sample, dists
 
     def compute_posteriors(
-        self, embedding: jnp.ndarray
+        self, embedding: jnp.ndarray, key
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         post_stats = self.get_statistics(embedding, statistics_head="embedding")
-        return self.compute_latent(post_stats)
+        return self.compute_latent(post_stats, key)
 
     def compute_priors(
-        self, hidden: jnp.ndarray
+        self, hidden: jnp.ndarray, key
     ) -> Tuple[jnp.ndarray, tfd.Distribution]:
         prior_stats = self.get_statistics(hidden, statistics_head="hidden")
-        return self.compute_latent(prior_stats)
+        return self.compute_latent(prior_stats, key)
 
     def reconstruct_depth(
         self, hidden: jnp.ndarray, latent_sample: jnp.ndarray
@@ -224,7 +225,7 @@ class S4WorldModel(nn.Module):
         self,
         x: jnp.ndarray,
         statistics_head: str,
-        unimix: float = 0.00,
+        unimix: float = 0.01,
     ) -> Dict[str, jnp.ndarray]:
         if self.discrete_latent_state:
             logits = self.statistic_heads[statistics_head](x)
@@ -241,6 +242,7 @@ class S4WorldModel(nn.Module):
             x = self.statistic_heads[statistics_head](x)
             mean, std = jnp.split(x, 2, -1)
             std = nn.softplus(std) + 0.1
+            print(std)
 
             return {"mean": mean, "std": std}
 
@@ -248,6 +250,7 @@ class S4WorldModel(nn.Module):
         self,
         depth_imgs: jnp.ndarray,
         actions: jnp.ndarray,
+        key,
         reconstruct_priors: bool = False,
     ) -> Tuple[tfd.Distribution, ...]:  # 3 tuple
         out = {
@@ -257,12 +260,13 @@ class S4WorldModel(nn.Module):
             "hidden": None,
         }
 
+        post_key, prior_key = jax.random.split(key)
         multi_step = depth_imgs.shape[1] > 1
 
         # Compute low dimensional embedding from depth images and the latent posteriors from the embeddings
         embeddings = self.encoder(depth_imgs)
         out["z_post"]["sample"], out["z_post"]["dist"] = self.compute_posteriors(
-            embeddings
+            embeddings, post_key
         )
 
         # Concatenate and mix the latent posteriors and actions before processing trough the S4 blocks
@@ -283,7 +287,7 @@ class S4WorldModel(nn.Module):
 
         # Compute the latent priors from the final hidden state of the sequence model
         out["z_prior"]["sample"], out["z_prior"]["dist"] = self.compute_priors(
-            out["hidden"]
+            out["hidden"], prior_key 
         )
 
         # Reconstruct depth images from the latent posteriors and the hidden state -> the reconstruction is conditioned on the history
@@ -306,6 +310,10 @@ class S4WorldModel(nn.Module):
         # embeddings = self.encoder(image)
         h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
         return z, h
+    
+    def encode(self, image: jnp.ndarray) -> jnp.ndarray:
+        z, _ = self.compute_posteriors(self.encoder(image))
+        return z
 
     # TODO: everything below here needs a refactoring pass
 
@@ -414,8 +422,8 @@ def _jitted_forward(
     return model.apply(
         {
             "params": params,
-            "cache": cache,
-            "prime": prime,
+            "cache": cache, # The hidden states of the SSM operating across the sequence
+            "prime": prime, # The SSM matrices, lambda, P, Q ...
         },
         image,
         action,
@@ -424,7 +432,18 @@ def _jitted_forward(
         method="encode_and_step",
     )
 
-
+@partial(jax.jit, static_argnums=(0))
+def _jitted_encode(
+    model, params, image: jax.Array
+) -> jax.Array:
+    return model.apply(
+        {
+            "params": params,
+        },
+        image,
+        method="encode",
+    )
+    
 class S4WMTorchWrapper:
     def __init__(
         self,
@@ -434,7 +453,6 @@ class S4WMTorchWrapper:
         d_pssm_blocks: int = 1024,
         d_ssm: int = 64,
         num_pssm_blocks: int = 4,
-        discrete_latent_state: bool = True,
         l_max: int = 99,
     ) -> None:
         self.d_pssm_block = d_pssm_blocks
@@ -486,15 +504,17 @@ class S4WMTorchWrapper:
             init_actions,
             init_latent,
         )
+        
+        _ = _jitted_encode(self.model, self.params, init_depth)
+        
         return
 
     def forward(
-        self, depth_imgs: torch.tensor, actions: torch.tensor, latent: jax.Array
+        self, depth_imgs: torch.tensor, actions: torch.tensor, latent: torch.tensor
     ) -> Tuple[torch.tensor, ...]:  # 2 tuple
 
-        jax_imgs, jax_actions = from_torch_to_jax(depth_imgs), from_torch_to_jax(
-            actions
-        )
+        jax_imgs, jax_actions, jax_latent = from_torch_to_jax(depth_imgs), from_torch_to_jax(actions), from_torch_to_jax(latent)
+        
         out, variables = _jitted_forward(
             self.model,
             self.params,
@@ -502,7 +522,7 @@ class S4WMTorchWrapper:
             self.prime,
             jax_imgs,
             jax_actions,
-            latent,
+            jax_latent,
         )
         self.rnn_cache = variables["cache"]
 
@@ -510,18 +530,24 @@ class S4WMTorchWrapper:
             from_jax_to_torch(out[0]),
             from_jax_to_torch(out[1]),
         )
+    
+    def encode(self, depth_imgs: torch.tensor) -> torch.tensor:
+        jax_depth_imgs = from_torch_to_jax(depth_imgs)
+        z = _jitted_encode(self.model, self.params, jax_depth_imgs)
+        return from_jax_to_torch(z)
 
     def reset_cache(self, batch_idx: Sequence) -> None:
+        batch_idx = from_torch_to_jax(batch_idx)
         for i in range(self.num_pssm_blocks):
             for j in range(2):
-                self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                self.rnn_cache["S4_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
                     "cache_x_k"
                 ] = (
-                    self.rnn_cache["PSSM_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
+                    self.rnn_cache["S4_blocks"][f"blocks_{i}"][f"layers_{j}"]["seq"][
                         "cache_x_k"
                     ]
                     .at[jnp.array([batch_idx])]
-                    .set(jnp.ones((self.d_ssm, self.d_pssm_block), dtype=jnp.complex64))
+                    .set(jnp.zeros((self.d_ssm, self.d_pssm_block), dtype=jnp.complex64))
                 )
         return
 
