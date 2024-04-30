@@ -100,7 +100,7 @@ class ResNetEncoder(nn.Module):
     act_fn: callable
     block_class: nn.Module = ResNetBlock
     num_blocks: tuple = (1, 1, 1)
-    c_hidden: tuple = (16, 32, 32)
+    c_hidden: tuple = (16, 32, 64)
 
     @nn.compact
     def __call__(self, x):
