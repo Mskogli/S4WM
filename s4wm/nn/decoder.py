@@ -219,7 +219,7 @@ class ResNetDecoder(nn.Module):
     act_fn: callable = nn.silu
     block_class: nn.Module = ResNetBlockDecoder
     num_blocks: tuple = (1, 1, 1)
-    c_hidden: tuple = (32, 32, 16)
+    c_hidden: tuple = (64, 32, 16)
 
     @nn.compact
     def __call__(self, x):

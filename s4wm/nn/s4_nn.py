@@ -157,8 +157,8 @@ class S4Layer(nn.Module):
         self.C = self.param("C", normal(stddev=0.5**0.5), (self.N, 2))
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
-        # self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
-        self.step = 0.1
+        self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
+        #self.step = 0.1
 
         if not self.rnn_mode:
             self.K = kernel_DPLR(

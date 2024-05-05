@@ -316,7 +316,7 @@ def train(
 
         if val_loss < best_loss:
 
-            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type={wm.latent_dist_type}"
+            run_id = f"{os.path.dirname(os.path.realpath(__file__))}/checkpoints/{dataset}/d_model={model.d_model}-lr={train.lr}-bsz={train.bsz}-latent_type={wm.latent_dist_type}_12_blocks"
             _ = checkpoints.save_checkpoint(
                 run_id,
                 state,
