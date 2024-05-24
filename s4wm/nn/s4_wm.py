@@ -309,6 +309,13 @@ class S4WorldModel(nn.Module):
         h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
         return z, h
 
+    def open_loop_predict(
+        self, action: jnp.ndarray, latent: jnp.ndarray, key
+    ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
+        h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
+        z, _ = self.compute_priors(h, key)
+        return z, h
+
     def encode(self, image: jnp.ndarray, key) -> jnp.ndarray:
         z, _ = self.compute_posteriors(self.encoder(image), key)
         return z
@@ -446,6 +453,15 @@ def _jitted_forward(
 
 
 @partial(jax.jit, static_argnums=(0))
+def _jitted_open_loop_predict(
+    model, params, cache, prime, action: jax.Array, latent: jax.Array, key
+) -> jax.Array:
+    return model.apply(
+        {"params": params, "cache": cache, "prime": prime}, action, latent
+    )
+
+
+@partial(jax.jit, static_argnums=(0))
 def _jitted_encode(model, params, image: jax.Array, key) -> jax.Array:
     return model.apply(
         {
@@ -524,7 +540,16 @@ class S4WMTorchWrapper:
             self.key,
         )
 
-        _ = _jitted_encode(self.model, self.params, init_depth, self.key)
+        _ = _jitted_open_loop_predict(
+            self.model,
+            self.params,
+            self.rnn_cache,
+            self.prime,
+            init_actions,
+            init_latent,
+            self.key,
+        )
+        # _ = _jitted_encode(self.model, self.params, init_depth, self.key)
 
         return
 
@@ -557,6 +582,34 @@ class S4WMTorchWrapper:
             from_jax_to_torch(out[0]),
             from_jax_to_torch(out[1]),
         )
+        
+    def open_loop_predict(self, action: torch.tensor, latent: torch.tensor) -> Tuple[torch.tensor, ...]: # 2 tuple
+        
+        self.key, subkey = jax.random.split(self.key)
+
+        jax_action, jax_latent = (
+            from_torch_to_jax(action),
+            from_torch_to_jax(latent),
+        )
+
+        out, variables = _jitted_forward(
+            self.model,
+            self.params,
+            self.rnn_cache,
+            self.prime,
+            jax_action,
+            jax_latent,
+            subkey,
+        )
+
+        self.rnn_cache = variables["cache"]
+
+        return (
+            from_jax_to_torch(out[0]),
+            from_jax_to_torch(out[1]),
+        )
+        
+        
 
     def encode(self, depth_imgs: torch.tensor) -> torch.tensor:
         self.key, subkey = jax.random.split(self.key)
