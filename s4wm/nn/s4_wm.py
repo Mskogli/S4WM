@@ -457,7 +457,11 @@ def _jitted_open_loop_predict(
     model, params, cache, prime, action: jax.Array, latent: jax.Array, key
 ) -> jax.Array:
     return model.apply(
-        {"params": params, "cache": cache, "prime": prime}, action, latent
+        {"params": params, "cache": cache, "prime": prime},
+        action,
+        latent,
+        key,
+        method="open_loop_predict",
     )
 
 
@@ -582,9 +586,11 @@ class S4WMTorchWrapper:
             from_jax_to_torch(out[0]),
             from_jax_to_torch(out[1]),
         )
-        
-    def open_loop_predict(self, action: torch.tensor, latent: torch.tensor) -> Tuple[torch.tensor, ...]: # 2 tuple
-        
+
+    def open_loop_predict(
+        self, action: torch.tensor, latent: torch.tensor
+    ) -> Tuple[torch.tensor, ...]:  # 2 tuple
+
         self.key, subkey = jax.random.split(self.key)
 
         jax_action, jax_latent = (
@@ -592,7 +598,7 @@ class S4WMTorchWrapper:
             from_torch_to_jax(latent),
         )
 
-        out, variables = _jitted_forward(
+        out, variables = _jitted_open_loop_predict(
             self.model,
             self.params,
             self.rnn_cache,
@@ -608,8 +614,6 @@ class S4WMTorchWrapper:
             from_jax_to_torch(out[0]),
             from_jax_to_torch(out[1]),
         )
-        
-        
 
     def encode(self, depth_imgs: torch.tensor) -> torch.tensor:
         self.key, subkey = jax.random.split(self.key)
