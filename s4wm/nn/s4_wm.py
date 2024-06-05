@@ -461,6 +461,7 @@ def _jitted_open_loop_predict(
         action,
         latent,
         key,
+        mutable=["cache"],
         method="open_loop_predict",
     )
 
