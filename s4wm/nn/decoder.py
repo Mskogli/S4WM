@@ -1,14 +1,16 @@
 import jax.numpy as jnp
 import os
+import jax
+import time
 
 from jax import random
 from flax import linen as nn
 from jax.nn.initializers import glorot_uniform, zeros
+from functools import partial
 
 
 class ImageDecoder(nn.Module):
-    latent_dim: int
-    act: str = "elu"
+    act: str = "silu"
     process_in_chunks: bool = False
 
     def setup(self) -> None:
@@ -108,14 +110,204 @@ class ImageDecoder(nn.Module):
             return self._upsample(latents)
 
 
+class Decoder(nn.Module):
+    c_out: int
+    c_hid: int
+    discrete_latent_state: bool
+
+    @nn.compact
+    def __call__(self, x):
+        if self.discrete_latent_state:
+            x = nn.Dense(features=4 * 8 * 2 * self.c_hid)(x)  # 1xc_hid for 2048 model
+            x = nn.silu(x)
+            x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
+        else:
+            x = nn.Dense(features=4 * 8 * 2 * self.c_hid)(x)
+            x = nn.silu(x)
+            x = x.reshape(x.shape[0], x.shape[1], 4, 8, -1)
+
+        x = nn.ConvTranspose(
+            features=2 * self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
+        )(x)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=2 * self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 1),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
+        )(x)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=self.c_hid,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(3, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
+        )(x)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=self.c_out,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding=(2, 2),
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
+        )(x)
+        x = nn.silu(x)
+        x = nn.ConvTranspose(
+            features=self.c_out,
+            kernel_size=(4, 4),
+            strides=(2, 2),
+            padding="SAME",
+            kernel_init=glorot_uniform(),
+            bias_init=zeros,
+        )(x)
+        x = nn.sigmoid(jnp.squeeze(x[:, :, :-1, :], axis=-1))
+        return x
+
+
+resnet_kernel_init = nn.initializers.variance_scaling(
+    2.0, mode="fan_out", distribution="normal"
+)
+
+
+class ResNetBlockDecoder(nn.Module):
+    act_fn: callable  # Activation function
+    c_out: int  # Output feature size
+    subsample: bool = False  # If True, we apply a stride inside F
+
+    @nn.compact
+    def __call__(self, x):
+        # Network representing F
+        z = nn.ConvTranspose(
+            self.c_out,
+            kernel_size=(2, 2),
+            strides=(1, 1) if not self.subsample else (2, 2),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(x)
+        # z = nn.BatchNorm()(z, use_running_average=not train)
+        z = self.act_fn(z)
+        z = nn.Conv(
+            self.c_out,
+            kernel_size=(2, 2),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(z)
+        # z = nn.BatchNorm()(z, use_running_average=not train)
+        if self.subsample:
+            x = nn.ConvTranspose(
+                self.c_out,
+                kernel_size=(1, 1),
+                strides=(2, 2),
+                kernel_init=resnet_kernel_init,
+            )(x)
+
+        x_out = self.act_fn(z + x)
+        return x_out
+
+
+class ResNetDecoder(nn.Module):
+    act_fn: callable = nn.silu
+    block_class: nn.Module = ResNetBlockDecoder
+    num_blocks: tuple = (1, 1, 1)
+    c_hidden: tuple = (64, 32, 16)
+
+    @nn.compact
+    def __call__(self, x):
+        # A first convolution on the original image to scale up the channel size
+        x = nn.Dense(features=5 * 8 * self.c_hidden[0])(x)
+        x = self.act_fn(x)
+        x = x.reshape(x.shape[0], x.shape[1], 5, 8, self.c_hidden[0])
+
+        x = nn.ConvTranspose(
+            self.c_hidden[0],
+            kernel_size=(3, 3),
+            strides=(2, 2),
+            padding=(1, 1),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(x)
+        x = self.act_fn(x)
+        x = nn.ConvTranspose(
+            self.c_hidden[0],
+            kernel_size=(3, 3),
+            strides=(2, 2),
+            padding=(1, 2),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(x)
+
+        if (
+            self.block_class == ResNetBlockDecoder
+        ):  # If pre-activation block, we do not apply non-linearities yet
+            # x = nn.BatchNorm()(x, use_running_average=not train)
+            x = self.act_fn(x)
+
+        # Creating the ResNet blocks
+        for block_idx, block_count in enumerate(self.num_blocks):
+            for bc in range(block_count):
+                # Subsample the first block of each group, except the very first one.
+                subsample = bc == 0 and block_idx > 0
+                # ResNet block
+                x = self.block_class(
+                    c_out=self.c_hidden[block_idx],
+                    act_fn=self.act_fn,
+                    subsample=subsample,
+                )(x)
+
+        # Mapping to classification output
+        x = nn.ConvTranspose(
+            1,
+            kernel_size=(3, 3),
+            strides=(2, 2),
+            kernel_init=resnet_kernel_init,
+            use_bias=False,
+        )(x)
+
+        x = nn.sigmoid(jnp.squeeze(x[:, :, :-1, :-8], axis=-1))
+        return x
+
+
+@partial(jax.jit, static_argnums=(0))
+def jitted_forward(model, params, latent):
+    return model.apply(
+        {
+            "params": jax.lax.stop_gradient(params),
+        },
+        jax.lax.stop_gradient(latent),
+    )
+
+
 if __name__ == "__main__":
     # Test decoder implementation
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
     key = random.PRNGKey(0)
-    decoder = ImageDecoder(latent_dim=128)
+    decoder = ResNetDecoder(act_fn=nn.silu, block_class=ResNetBlockDecoder)
 
-    random_latent_batch = random.normal(key, (2, 10, 128))
+    random_latent_batch = random.normal(key, (1, 2, 2048))
+
     params = decoder.init(key, random_latent_batch)["params"]
     output = decoder.apply({"params": params}, random_latent_batch)
     print("Output shape: ", output.shape)
+
+    # _ = jitted_forward(decoder, params, random_latent_batch)
+
+    # fnc = jax.vmap(jitted_forward)
+    # fwp_times = []
+    # for _ in range(200):
+    #     start = time.time()
+    #     _ = jitted_forward(decoder, params, random_latent_batch)
+    #     end = time.time()
+    #     print(end - start)
+    #     fwp_times.append(end - start)
+    # fwp_times = jnp.array(fwp_times)

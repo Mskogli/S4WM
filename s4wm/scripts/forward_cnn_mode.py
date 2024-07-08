@@ -15,8 +15,9 @@ from s4wm.utils.dlpack import from_torch_to_jax
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]="false"
 
-    model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=False, **cfg.wm)
+    model = S4WorldModel(S4_config=cfg.model, training=False, **cfg.wm)
     torch.manual_seed(0)
 
     _, trainloader = create_depth_dataset(batch_size=4)
@@ -26,29 +27,47 @@ def main(cfg: DictConfig) -> None:
     test_actions = from_torch_to_jax(test_actions)
 
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0001-bsz=4-latent_type=disc/checkpoint_15"
+        "/home/mihir/dev-mathias/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=1024-lr=0.0002-bsz=8-latent_type=Gaussian_12_blocks/checkpoint_88"
     )
     params = state["params"]
 
     print(test_depth_imgs.shape, test_actions.shape)
-    model.init(jax.random.PRNGKey(0), test_depth_imgs, test_actions)
-
+    model.init(jax.random.PRNGKey(0), test_depth_imgs, test_actions, jax.random.PRNGKey(2))
+    key = jax.random.PRNGKey(1)
     out = model.apply(
         {"params": params},
         test_depth_imgs,
         test_actions,
-        compute_reconstructions=True,
-        sample_mean=False,
+        key,
+        reconstruct_priors=True,
     )
 
     pred_depth = out["depth"]["pred"].mean()
     recon_depth = out["depth"]["recon"].mean()
-    print(pred_depth.shape)
+    batch = 2
+    print(recon_depth[0, 0].shape)
+    color = "magma"
     for i in range(99):
-        plt.imsave(f"imgs/pred_{i}.png", pred_depth[3, i, :].reshape(135, 240))
-        plt.imsave(f"imgs/recon_{i}.png", recon_depth[3, i, :].reshape(135, 240))
         plt.imsave(
-            f"imgs/label_{i}.png", test_depth_imgs[3, i + 1, :].reshape(135, 240)
+            f"imgs/pred_{i}.png",
+            pred_depth[batch, i, :].reshape(135, 240),
+            cmap=color,
+            vmin=0,
+            vmax=1,
+        )
+        plt.imsave(
+            f"imgs/recon_{i}.png",
+            recon_depth[batch, i, :].reshape(135, 240),
+            cmap=color,
+            vmin=0,
+            vmax=1,
+        )
+        plt.imsave(
+            f"imgs/label_{i}.png",
+            test_depth_imgs[batch, i + 1, :].reshape(135, 240),
+            cmap=color,
+            vmin=0,
+            vmax=1,
         )
 
 

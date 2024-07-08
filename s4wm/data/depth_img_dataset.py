@@ -17,8 +17,8 @@ class DepthImageDataset(Dataset):
         self.file = h5py.File(file_path, "r")
         self.device = device
         self.actions = actions
-        self.num_trajs = 16000
-        self.max_depth_value = 20
+        self.num_trajs = 16500
+        self.max_depth_value = 10
         self.min_depth_value = 0.0
 
     def __len__(self) -> int:
@@ -26,6 +26,7 @@ class DepthImageDataset(Dataset):
 
     def __getitem__(self, idx) -> torch.tensor:
         depth_images = []
+        states = []
         actions = []
 
         for i in range(100):
@@ -34,6 +35,11 @@ class DepthImageDataset(Dataset):
             depth_images.append(
                 torch.from_numpy(img_data)
                 .view(1, 135, 240, 1)
+                .to(torch.device(self.device))
+            )
+            states.append(
+                torch.from_numpy(dataset.attrs["states"])
+                .view(1, 16)
                 .to(torch.device(self.device))
             )
             actions.append(
@@ -52,7 +58,10 @@ class DepthImageDataset(Dataset):
             self.max_depth_value - self.min_depth_value
         )
 
-        acts = torch.cat(actions, dim=0)
+        acts = torch.cat(actions, dim=0)[1:]
+        sts = torch.cat(states, dim=0)[:-1]
+        extras = torch.cat([acts, sts], dim=-1)
+
         labels = imgs[1:, :].view(-1, 135 * 240)
 
         return (imgs, acts, labels)
@@ -71,7 +80,7 @@ def split_dataset(
 if __name__ == "__main__":
 
     dataset = DepthImageDataset(
-        "/home/mathias/dev/aerial_gym_simulator/aerial_gym/rl_training/rl_games/quad_depth_imgs",
+        "/home/mihir/dev-mathias/quad_depth_imgs",
         "cuda:0",
         actions=True,
     )
@@ -83,4 +92,6 @@ if __name__ == "__main__":
 
     for idx, image in enumerate(train_batch[0], 1):
         print(image.size())
+        print(image.requires_grad)
+        print(image.device)
         plt.imsave(f"imgs/test{idx}.png", image.view(135, 240).cpu().numpy())

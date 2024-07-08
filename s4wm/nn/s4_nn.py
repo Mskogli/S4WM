@@ -1,5 +1,5 @@
-import jax
 import jax.numpy as jnp
+import jax
 
 from flax import linen as nn
 from jax.nn.initializers import normal
@@ -19,7 +19,7 @@ class StackedPSSMBlocks(nn.Module):
     d_model: int = 512
     n_layers: int = 2
     n_blocks: int = 2
-    prenorm: bool = False
+    prenorm: bool = True
     dropout: float = 0.1
     training: bool = True
     embedding: bool = False
@@ -62,7 +62,7 @@ class StackedModel(nn.Module):
         self.drop = nn.Dropout(
             self.dropout, broadcast_dims=[0], deterministic=not self.training
         )
-        self.dense_1 = nn.Dense(features=2 * self.d_model)
+        self.dense_1 = nn.Dense(features=self.d_model)
         self.dense_2 = nn.Dense(features=self.d_model)
 
         self.layers = [
@@ -115,6 +115,7 @@ class SequenceBlock(nn.Module):
         )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        print(x.shape)
         skip = x
         if self.prenorm:
             x = self.norm(x)
@@ -137,11 +138,10 @@ class S4Layer(nn.Module):
 
     # Special parameters with multiplicative factor on lr and no weight decay (handled by main train script)
     lr = {
-        "Lambda_re": 0.01,
-        "Lambda_im": 0.01,
-        "P": 0.01,
-        "B": 0.01,
-        "log_step": 0.01,
+        "Lambda_re": 0.1,
+        "Lambda_im": 0.1,
+        "P": 0.1,
+        "B": 0.1,
     }
 
     def setup(self) -> None:
@@ -158,6 +158,7 @@ class S4Layer(nn.Module):
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
         self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
+        #self.step = 0.1
 
         if not self.rnn_mode:
             self.K = kernel_DPLR(
