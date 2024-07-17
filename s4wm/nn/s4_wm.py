@@ -430,7 +430,7 @@ class S4WMTorchWrapper:
         return
 
     def forward(
-        self, depth_imgs: torch.tensor, actions: torch.tensor, latent: torch.tensor
+        self, depth_imgs: torch.tensor, actions: torch.tensor, latents: torch.tensor
     ) -> Tuple[torch.tensor, ...]:  # 2 tuple
 
         self.key, subkey = jax.random.split(self.key)
@@ -438,7 +438,7 @@ class S4WMTorchWrapper:
         jax_imgs, jax_actions, jax_latent = (
             from_torch_to_jax(depth_imgs),
             from_torch_to_jax(actions),
-            from_torch_to_jax(latent),
+            from_torch_to_jax(latents),
         )
 
         out, variables = _jitted_forward(
@@ -460,14 +460,14 @@ class S4WMTorchWrapper:
         )
 
     def open_loop_predict(
-        self, action: torch.tensor, latent: torch.tensor
+        self, actions: torch.tensor, latents: torch.tensor
     ) -> Tuple[torch.tensor, ...]:  # 2 tuple
 
         self.key, subkey = jax.random.split(self.key)
 
         jax_action, jax_latent = (
-            from_torch_to_jax(action),
-            from_torch_to_jax(latent),
+            from_torch_to_jax(actions),
+            from_torch_to_jax(latents),
         )
 
         out, variables = _jitted_open_loop_predict(
