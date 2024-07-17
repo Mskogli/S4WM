@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 from omegaconf import DictConfig
-from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.nn.s4_wm import S4WM
 from s4wm.data.dataloaders import create_depth_dataset
 from s4wm.utils.dlpack import from_torch_to_jax
 
@@ -17,7 +17,7 @@ def main(cfg: DictConfig) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     torch.manual_seed(0)
 
-    model = S4WorldModel(S4_config=cfg.model, training=False, rnn_mode=True, **cfg.wm)
+    model = S4WM(S4_config=cfg.model, training=False, rnn_mode=True, **cfg.wm)
     _, trainloader = create_depth_dataset(batch_size=4)
     test_depth_imgs, test_actions, _ = next(iter(trainloader))
 

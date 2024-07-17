@@ -62,11 +62,13 @@ resnet_kernel_init = nn.initializers.variance_scaling(
     2.0, mode="fan_out", distribution="normal"
 )
 
+# Code below adapted from https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/JAX/tutorial5/Inception_ResNet_DenseNet.html
+
 
 class ResNetBlock(nn.Module):
-    act_fn: callable  # Activation function
-    c_out: int  # Output feature size
-    subsample: bool = False  # If True, we apply a stride inside F
+    act_fn: callable
+    c_out: int
+    subsample: bool = False
 
     @nn.compact
     def __call__(self, x):
@@ -104,7 +106,6 @@ class ResNetEncoder(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # A first convolution on the original image to scale up the channel size
         x = nn.Conv(
             self.c_hidden[0],
             kernel_size=(3, 3),
@@ -122,31 +123,26 @@ class ResNetEncoder(nn.Module):
         )(x)
         x = self.act_fn(x)
 
-        # Creating the ResNet blocks
         for block_idx, block_count in enumerate(self.num_blocks):
-            for _ in range(block_count):
-                # Subsample the first block of each group, except the very first one.
-                subsample = True
-                # ResNet block
+            for bc in range(block_count):
+                # Subsample the first block of each group
+                subsample = bc == 0
                 x = self.block_class(
                     c_out=self.c_hidden[block_idx],
                     act_fn=self.act_fn,
                     subsample=subsample,
                 )(x)
 
-        # Mapping to classification output
-        x = x.reshape(x.shape[0], x.shape[1], -1)
-
-        return x
+        return x.reshape(x.shape[0], x.shape[1], -1)
 
 
 @partial(jax.jit, static_argnums=(0))
 def jitted_forward(model, params, image):
     return model.apply(
         {
-            "params": jax.lax.stop_gradient(params),
+            "params": params,
         },
-        jax.lax.stop_gradient(image),
+        image,
     )
 
 

@@ -6,7 +6,7 @@ import jax
 import matplotlib.pyplot as plt
 
 from omegaconf import DictConfig
-from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.nn.s4_wm import S4WM
 from s4wm.data.dataloaders import create_depth_dataset
 from s4wm.utils.dlpack import from_torch_to_jax
 from functools import partial
@@ -61,7 +61,7 @@ def main(cfg: DictConfig) -> None:
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
     key = jax.random.PRNGKey(0)
-    model = S4WorldModel(S4_config=cfg.model, training=False, **cfg.wm)
+    model = S4WM(S4_config=cfg.model, training=False, **cfg.wm)
     torch.manual_seed(0)
 
     _, val_loader = create_depth_dataset(batch_size=8)
