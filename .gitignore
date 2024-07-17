@@ -9,3 +9,4 @@ nn/wandb/
 nn/outputs/
 nn/checkpoints/
 weights
+.vscode
