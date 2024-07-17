@@ -44,7 +44,6 @@ class MSEDist:
 
     def __init__(self, mode, dims, agg="sum"):
         self._mode = mode
-        print("mode", mode.shape)
         self._dims = tuple([-x for x in range(1, dims + 1)])
         self._agg = agg
         self.batch_shape = mode.shape[: len(mode.shape) - dims]

@@ -1,20 +1,27 @@
 import os
 import hydra
 import jax
-import jax.numpy as np
+import jax.numpy as jnp
 import optax
 import torch
 
 from functools import partial
 from flax.training import checkpoints, train_state
+from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-from typing import Any
+from typing import Any, Union, Dict, Tuple
 
 from s4wm.nn.s4_wm import S4WM
 from s4wm.nn.s4_nn import S4Layer
 from s4wm.data.dataloaders import Dataloaders
 from s4wm.utils.dlpack import from_torch_to_jax
+
+from jax.tree_util import PyTreeDef
+
+PyTree = Union[Any, tuple, list, dict, PyTreeDef]
+PRNGKey = jnp.ndarray
+
 
 try:
     import wandb
@@ -41,16 +48,16 @@ def map_nested_fn(fn):
 
 
 def create_train_state(
-    rng,
-    model_cls,
-    trainloader,
-    lr=1e-3,
-    lr_layer=None,
-    lr_schedule=False,
-    use_batchmean=False,
-    weight_decay=0.0,
-    total_steps=-1,
-):
+    rng: PRNGKey,
+    model_cls: callable,
+    trainloader: DataLoader,
+    lr: float = 1e-3,
+    lr_layer: Dict = None,
+    lr_schedule: bool = False,
+    use_batchmean: bool = False,
+    weight_decay: float = 0.0,
+    total_steps: int = -1,
+) -> PyTree:
     model = model_cls(training=True)
     init_rng, dropout_rng, sample_rng = jax.random.split(rng, num=3)
 
@@ -111,7 +118,7 @@ def create_train_state(
     ), f"Special params {extra_keys} do not correspond to actual params"
 
     # Print parameter count
-    _is_complex = lambda x: x.dtype in [np.complex64, np.complex128]
+    _is_complex = lambda x: x.dtype in [jnp.complex64, jnp.complex128]
     param_sizes = map_nested_fn(
         lambda k, param: (
             param.size * (2 if _is_complex(param) else 1)
@@ -133,7 +140,9 @@ def create_train_state(
         )
 
 
-def train_epoch(state, rng, model_cls, trainloader):
+def train_epoch(
+    state: PyTree, rng: PRNGKey, model_cls: callable, trainloader: DataLoader
+) -> Tuple[PyTree, jnp.ndarray]:
     model = model_cls(training=True)
     batch_losses = []
 
@@ -160,11 +169,13 @@ def train_epoch(state, rng, model_cls, trainloader):
 
     return (
         state,
-        np.mean(np.array(batch_losses)),
+        jnp.mean(jnp.array(batch_losses)),
     )
 
 
-def validate(state, rng, model_cls, testloader):
+def validate(
+    state: PyTree, rng: PRNGKey, model_cls: callable, testloader: DataLoader
+) -> float:
     losses = []
     model = model_cls(training=False)
 
@@ -180,19 +191,19 @@ def validate(state, rng, model_cls, testloader):
         )
 
         losses.append(loss)
-    return np.mean(np.array(losses))
+    return jnp.mean(jnp.array(losses))
 
 
 @partial(jax.jit, static_argnums=6)
 def train_step(
-    state,
-    drop_rng,
-    sample_rng,
-    batch_depth,
-    batch_actions,
-    batch_depth_labels,
-    model,
-):
+    state: PyTree,
+    drop_rng: PRNGKey,
+    sample_rng: PRNGKey,
+    batch_depth: jnp.ndarray,
+    batch_actions: jnp.ndarray,
+    batch_depth_labels: jnp.ndarray,
+    model: callable,
+) -> Tuple[PyTree, float, float, float]:
 
     def loss_fn(params):
         out, updates = None, None
@@ -222,9 +233,9 @@ def train_step(
             z_prior_dist=out["z_prior"]["dist"],
         )
 
-        return np.mean(loss), (
-            np.mean(recon_loss),
-            np.mean(kl_loss),
+        return jnp.mean(loss), (
+            jnp.mean(recon_loss),
+            jnp.mean(kl_loss),
             updates,
         )
 
@@ -238,7 +249,14 @@ def train_step(
 
 
 @partial(jax.jit, static_argnums=5)
-def eval_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model):
+def eval_step(
+    state: PyTree,
+    rng: PRNGKey,
+    batch_depth: jnp.ndarray,
+    batch_actions: jnp.ndarray,
+    batch_depth_labels: jnp.ndarray,
+    model: callable,
+) -> float:
 
     if state.batch_stats is not None:
         out = model.apply(
@@ -262,7 +280,7 @@ def eval_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model)
         z_prior_dist=out["z_prior"]["dist"],
     )
 
-    loss = np.mean(loss)
+    loss = jnp.mean(loss)
 
     return loss
 
@@ -273,7 +291,7 @@ def train(
     wm: DictConfig,
     model: DictConfig,
     train: DictConfig,
-):
+) -> None:
     print("[*] Setting Randomness...")
 
     key = jax.random.PRNGKey(seed)
@@ -308,7 +326,7 @@ def train(
     )
 
     # Loop over epochs
-    best_loss, best_epoch = np.inf, 0
+    best_loss, best_epoch = jnp.inf, 0
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
 
