@@ -2,12 +2,11 @@ import numpy as np
 
 from jax.tree_util import tree_map
 from torch.utils import data
-from torch.utils.data import Dataset, random_split, DataLoader
-
-
-from .depth_img_dataset import DepthImageDataset, split_dataset
-
+from torch.utils.data import DataLoader
 from typing import Tuple
+
+from s4wm.data.depth_img_dataset import DepthImageDataset, split_dataset
+from s4wm.utils.dlpack import from_torch_to_jax
 
 
 def numpy_collate(batch):
@@ -44,17 +43,18 @@ class NumpyLoader(data.DataLoader):
 
 
 def create_depth_dataset(
+    file_path: str,
     batch_size: int = 128,
-) -> Tuple[NumpyLoader, ...]:  # 2 tuple
-    print("[*] Creating Dataset and Generating Dataloaders")
-
+    val_fraction: int = 0.1,
+    device: str = "cuda:0",
+    num_trajs: int = 16500,
+    traj_length: int = 100,
+) -> Tuple[DataLoader, ...]:  # 2 tuple
     dataset = DepthImageDataset(
-        "/home/mihir/dev-mathias/quad_depth_imgs",
-        "cuda:0",
-        actions=True,
+        file_path, device, num_trajs=num_trajs, traj_length=traj_length
     )
 
-    train_dataset, val_dataset = split_dataset(dataset, 0.1)
+    train_dataset, val_dataset = split_dataset(dataset, val_fraction)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
@@ -64,3 +64,17 @@ def create_depth_dataset(
 Dataloaders = {
     "depth_dataset": create_depth_dataset,
 }
+
+if __name__ == "__main__":
+    train_loader, val_loader = create_depth_dataset(
+        file_path="/home/mathias/dev/datasets/quad_depth_imgs",
+        batch_size=8,
+        val_fraction=0.1,
+    )
+
+    val_depth_images, val_actions, val_labels = next(iter(val_loader))
+    val_depth_images, val_actions, val_labels = map(
+        from_torch_to_jax, (val_depth_images, val_actions, val_labels)
+    )
+
+    print(val_depth_images.shape, val_actions.shape, val_labels.shape)

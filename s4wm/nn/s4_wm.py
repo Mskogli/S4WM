@@ -212,7 +212,7 @@ class S4WM(nn.Module):
         actions: jnp.ndarray,
         rng_seed: PRNGKey,
         reconstruct_priors: bool = False,
-    ) -> Dict[str, Tuple[tfd.distribution, jnp.ndarray]]:
+    ) -> Dict[str, Tuple[tfd.Distribution, jnp.ndarray]]:
         out = {
             "z_post": {"dist": None, "sample": None},
             "z_prior": {"dist": None, "sample": None},
