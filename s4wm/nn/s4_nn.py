@@ -19,7 +19,6 @@ class S4Blocks(nn.Module):
     d_model: int = 512
     n_layers: int = 2
     n_blocks: int = 2
-    prenorm: bool = True
     dropout: float = 0.1
     training: bool = True
     embedding: bool = False
@@ -28,11 +27,10 @@ class S4Blocks(nn.Module):
     def setup(self) -> None:
         self.dense = nn.Dense(features=self.d_model)
         self.blocks = [
-            S4Blocks(
+            S4Block(
                 layer=self.layer,
                 d_model=self.d_model,
                 n_layers=self.n_layers,
-                prenorm=self.prenorm,
                 dropout=self.dropout,
                 training=self.training,
                 embedding=self.embedding,
@@ -47,7 +45,7 @@ class S4Blocks(nn.Module):
         return x
 
 
-class S4Blocks(nn.Module):
+class S4Block(nn.Module):
     layer: dict
     d_model: int
     n_layers: int
@@ -67,7 +65,6 @@ class S4Blocks(nn.Module):
         self.layers = [
             SequenceBlock(
                 layer=self.layer,
-                prenorm=self.prenorm,
                 d_model=self.d_model,
                 dropout=self.dropout,
                 training=self.training,

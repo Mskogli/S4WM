@@ -116,6 +116,7 @@ class ResNetDecoder(nn.Module):
 
     @nn.compact
     def __call__(self, x):
+        # A first convolution on the original image to scale up the channel size
         x = nn.Dense(features=5 * 8 * self.c_hidden[0])(x)
         x = self.act_fn(x)
         x = x.reshape(x.shape[0], x.shape[1], 5, 8, self.c_hidden[0])
@@ -142,8 +143,8 @@ class ResNetDecoder(nn.Module):
 
         for block_idx, block_count in enumerate(self.num_blocks):
             for bc in range(block_count):
-                # Subsample the first block of each group
-                subsample = bc == 0
+                # Subsample the first block of each group, except the very first one.
+                subsample = bc == 0 and block_idx > 0
                 x = self.block_class(
                     c_out=self.c_hidden[block_idx],
                     act_fn=self.act_fn,
@@ -174,19 +175,20 @@ def jitted_forward(model, params, latent):
 if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-    key = random.PRNGKey(0)
+    key = random.PRNGKey(200)
     decoder = ResNetDecoder(act_fn=nn.silu, block_class=ResNetBlockDecoder)
 
     random_latent_batch = random.normal(key, (1, 2, 2048))
 
     params = decoder.init(key, random_latent_batch)["params"]
     output = decoder.apply({"params": params}, random_latent_batch)
+    print(output.shape)
 
     _ = jitted_forward(decoder, params, random_latent_batch)
 
     fnc = jax.vmap(jitted_forward)
     fwp_times = []
-    for _ in range(2000):
+    for _ in range(20):
         start = time.time()
         _ = jitted_forward(decoder, params, random_latent_batch)
         end = time.time()

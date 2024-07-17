@@ -106,7 +106,7 @@ def discrete_DPLR(
     Ab = A1 @ A0
     Bb = 2 * A1 @ B
 
-    # Recover Cbar from Ct
+    # Recover Cbar from Ct (Ct = \tilde C in the thesis)
     Cb = Ct @ inv(I - matrix_power(Ab, L)).conj()
     return Ab, Bb, Cb.conj()
 
