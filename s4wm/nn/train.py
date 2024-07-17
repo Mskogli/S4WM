@@ -148,7 +148,6 @@ def train_epoch(state, rng, model_cls, trainloader):
             from_torch_to_jax(batch_actions),
             from_torch_to_jax(batch_labels),
             model,
-            1,
         )
         batch_losses.append(batch_loss)
 
@@ -203,7 +202,7 @@ def train_step(
                 {"params": params, "batch_stats": state.batch_stats},
                 depth_imgs=batch_depth,
                 actions=batch_actions,
-                key=sample_rng,
+                rng_seed=sample_rng,
                 rngs={"dropout": drop_rng},
                 mutable=["batch_stats"],
             )
@@ -212,7 +211,7 @@ def train_step(
                 {"params": params},
                 depth_imgs=batch_depth,
                 actions=batch_actions,
-                key=sample_rng,
+                rng_seed=sample_rng,
                 rngs={"dropout": drop_rng},
             )
 
@@ -244,12 +243,17 @@ def eval_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model)
     if state.batch_stats is not None:
         out = model.apply(
             {"params": state.params, "batch_stats": state.batch_stats},
-            batch_depth,
-            batch_actions,
-            rng,
+            depth_imgs=batch_depth,
+            depth_actions=batch_actions,
+            rng_seed=rng,
         )
     else:
-        out = model.apply({"params": state.params}, batch_depth, batch_actions, rng)
+        out = model.apply(
+            {"params": state.params},
+            depth_imgs=batch_depth,
+            depth_actions=batch_actions,
+            rng_seed=rng,
+        )
 
     loss, _ = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
@@ -278,7 +282,9 @@ def train(
 
     # Create dataset and data loaders
     create_dataloaders_fn = Dataloaders[dataset]
-    trainloader, testloader = create_dataloaders_fn(batch_size=train.bsz)
+    trainloader, testloader = create_dataloaders_fn(
+        file_path=train.dataset_path, batch_size=train.bsz
+    )
 
     # Get model class and arguments
     layer_cls = S4Layer

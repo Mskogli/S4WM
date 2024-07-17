@@ -154,11 +154,12 @@ if __name__ == "__main__":
     random_img_batch = random.normal(key, (1, 1, 135, 240, 1))
     params = encoder.init(key, random_img_batch)
     output = encoder.apply(params, random_img_batch)
+    print(output.shape)
 
     import time
 
     fwp_times = []
-    for _ in range(2000):
+    for _ in range(20):
         start = time.time()
         _ = jitted_forward(encoder, params["params"], random_img_batch)
         end = time.time()
