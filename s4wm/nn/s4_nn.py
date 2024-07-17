@@ -14,7 +14,7 @@ from .s4_ssm import (
 )
 
 
-class StackedPSSMBlocks(nn.Module):
+class S4Blocks(nn.Module):
     layer: dict  # Extra arguments to pass into layer constructor
     d_model: int = 512
     n_layers: int = 2
@@ -28,7 +28,7 @@ class StackedPSSMBlocks(nn.Module):
     def setup(self) -> None:
         self.dense = nn.Dense(features=self.d_model)
         self.blocks = [
-            StackedModel(
+            S4Blocks(
                 layer=self.layer,
                 d_model=self.d_model,
                 n_layers=self.n_layers,
@@ -47,11 +47,10 @@ class StackedPSSMBlocks(nn.Module):
         return x
 
 
-class StackedModel(nn.Module):
-    layer: dict  # Extra arguments to pass into layer constructor
+class S4Blocks(nn.Module):
+    layer: dict
     d_model: int
     n_layers: int
-    prenorm: bool = True
     dropout: float = 0.0
     training: bool = True
     embedding: bool = False
@@ -97,8 +96,6 @@ class SequenceBlock(nn.Module):
     layer: dict  # Hyperparameters of inner layer
     dropout: float
     d_model: int
-    prenorm: bool = True
-    glu: bool = True
     training: bool = True
     rnn_mode: bool = False
 
@@ -106,8 +103,7 @@ class SequenceBlock(nn.Module):
         self.seq = S4Layer(**self.layer, rnn_mode=self.rnn_mode)
         self.norm = nn.LayerNorm()
         self.out = nn.Dense(self.d_model)
-        if self.glu:
-            self.out2 = nn.Dense(self.d_model)
+        self.out2 = nn.Dense(self.d_model)
         self.drop = nn.Dropout(
             self.dropout,
             broadcast_dims=[0],
@@ -115,19 +111,12 @@ class SequenceBlock(nn.Module):
         )
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        print(x.shape)
         skip = x
-        if self.prenorm:
-            x = self.norm(x)
+        x = self.norm(x)
         x = self.seq(x)
         x = self.drop(nn.gelu(x))
-        if self.glu:
-            x = self.out(x) * jax.nn.sigmoid(self.out2(x))
-        else:
-            x = self.out(x)
+        x = self.out(x) * jax.nn.sigmoid(self.out2(x))
         x = skip + self.drop(x)
-        if not self.prenorm:
-            x = self.norm(x)
         return x
 
 
@@ -158,7 +147,6 @@ class S4Layer(nn.Module):
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
         self.step = jnp.exp(self.param("log_step", log_step_initializer(), (1,)))
-        #self.step = 0.1
 
         if not self.rnn_mode:
             self.K = kernel_DPLR(
@@ -171,7 +159,6 @@ class S4Layer(nn.Module):
                 self.l_max,
             )
         else:
-
             # Flax trick to cache discrete form during decoding.
             def init_discrete():
                 return discrete_DPLR(
@@ -184,7 +171,6 @@ class S4Layer(nn.Module):
                     self.l_max,
                 )
 
-            # RNN Cache
             self.x_k_1 = self.variable(
                 "cache", "cache_x_k", lambda: jnp.zeros((self.N,), dtype=jnp.complex64)
             )
@@ -200,7 +186,7 @@ class S4Layer(nn.Module):
             # CNN Mode - paralell forward pass
             return causal_convolution(u, self.K) + self.D * u
         else:
-            # RNN Mode
+            # RNN Mode - sequential forward pass
             x_k, y_s = scan_SSM(*self.ssm, u[:, jnp.newaxis], self.x_k_1.value)
             if self.is_mutable_collection("cache") and not self.is_mutable_collection(
                 "prime"
@@ -221,8 +207,8 @@ def cloneLayer(layer):
 
 S4Layer = cloneLayer(S4Layer)
 
-S4Block = nn.vmap(
-    StackedPSSMBlocks,
+S4Blocks = nn.vmap(
+    S4Blocks,
     in_axes=0,
     out_axes=0,
     variable_axes={"params": None, "dropout": None, "cache": 0, "prime": None},

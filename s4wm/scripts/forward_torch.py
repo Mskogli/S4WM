@@ -14,10 +14,10 @@ if __name__ == "__main__":
     torch_wm = S4WMTorchWrapper(
         NUM_ENVS,
         "/home/mihir/dev-mathias/structured-state-space-wm/weights/512_resnet_encoder_decoder",
-        d_latent=1024,
-        d_pssm_blocks=512,
-        num_pssm_blocks=3,
-        d_ssm=100,
+        latent_dim=1024,
+        S4_block_dim=512,
+        num_S4_blocks=3,
+        ssm_dim=100,
     )
 
     init_depth = torch.zeros(

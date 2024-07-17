@@ -11,16 +11,15 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 from typing import Any
 
-from s4wm.nn.s4_wm import S4WorldModel
+from s4wm.nn.s4_wm import S4WM
 from s4wm.nn.s4_nn import S4Layer
 from s4wm.data.dataloaders import Dataloaders
 from s4wm.utils.dlpack import from_torch_to_jax
 
 try:
-    # Slightly nonstandard import name to make config easier - see example_train()
     import wandb
 
-    assert hasattr(wandb, "__version__")  # verify package import not local dir
+    assert hasattr(wandb, "__version__")
 except (ImportError, AssertionError):
     wandb = None
 
@@ -64,7 +63,7 @@ def create_train_state(
         {"params": init_rng, "dropout": dropout_rng},
         init_depth,
         init_actions,
-        sample_rng
+        sample_rng,
     )
 
     params = parameters["params"]
@@ -134,7 +133,7 @@ def create_train_state(
         )
 
 
-def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
+def train_epoch(state, rng, model_cls, trainloader):
     model = model_cls(training=True)
     batch_losses = []
 
@@ -153,7 +152,12 @@ def train_epoch(state, rng, model_cls, trainloader, beta_warmup=True):
         )
         batch_losses.append(batch_loss)
 
-        wandb.log({"train/recon_loss": recon_loss.tolist(), "train/kld_loss": kld_loss.tolist()})
+        wandb.log(
+            {
+                "train/recon_loss": recon_loss.tolist(),
+                "train/kld_loss": kld_loss.tolist(),
+            }
+        )
 
     return (
         state,
@@ -182,7 +186,13 @@ def validate(state, rng, model_cls, testloader):
 
 @partial(jax.jit, static_argnums=6)
 def train_step(
-    state, drop_rng, sample_rng, batch_depth, batch_actions, batch_depth_labels, model, beta_rate=1
+    state,
+    drop_rng,
+    sample_rng,
+    batch_depth,
+    batch_actions,
+    batch_depth_labels,
+    model,
 ):
 
     def loss_fn(params):
@@ -211,7 +221,6 @@ def train_step(
             img_posterior=batch_depth_labels,
             z_posterior_dist=out["z_post"]["dist"][:, 1:],
             z_prior_dist=out["z_prior"]["dist"],
-            beta_rate=beta_rate,
         )
 
         return np.mean(loss), (
@@ -237,15 +246,10 @@ def eval_step(state, rng, batch_depth, batch_actions, batch_depth_labels, model)
             {"params": state.params, "batch_stats": state.batch_stats},
             batch_depth,
             batch_actions,
-            rng, 
+            rng,
         )
     else:
-        out = model.apply(
-            {"params": state.params},
-            batch_depth,
-            batch_actions,
-            rng
-        )
+        out = model.apply({"params": state.params}, batch_depth, batch_actions, rng)
 
     loss, _ = model.compute_loss(
         img_prior_dist=out["depth"]["recon"],
@@ -284,7 +288,7 @@ def train(
         f"[*] Starting S4 World Model Training On Dataset: {dataset} =>> Initializing..."
     )
 
-    model_cls = partial(S4WorldModel, S4_config=model, **wm)
+    model_cls = partial(S4WM, S4_config=model, **wm)
 
     state = create_train_state(
         rng,
@@ -302,9 +306,7 @@ def train(
     for epoch in range(train.epochs):
         print(f"[*] Starting Training Epoch {epoch + 1}...")
 
-        state, train_loss = train_epoch(
-            state, train_rng, model_cls, trainloader, beta_warmup=True
-        )
+        state, train_loss = train_epoch(state, train_rng, model_cls, trainloader)
 
         print(f"[*] Running Epoch {epoch + 1} Validation...")
 
@@ -331,7 +333,7 @@ def train(
         if wandb is not None:
             wandb.run.summary["Best Test Loss"] = best_loss.tolist()
             wandb.run.summary["Best Epoch"] = best_epoch
-        
+
         key, train_rng, val_rng = jax.random.split(key, num=3)
 
 
@@ -350,33 +352,6 @@ def main(cfg: DictConfig) -> None:
         wandb.init(**wandb_cfg, config=OmegaConf.to_container(cfg, resolve=True))
 
     train(**cfg)
-
-
-def calculate_cyclical_lr(iteration, total_steps, num_cycles, hold_fraction=0.5):
-    step_size, hold_steps = calculate_step_size_and_hold_steps(
-        total_steps, num_cycles, hold_fraction
-    )
-
-    cycle = iteration // (step_size + hold_steps)
-
-    cycle_pos = iteration - (cycle * (step_size + hold_steps))
-
-    if cycle_pos < step_size:
-        return cycle_pos / step_size
-    elif cycle_pos < step_size + hold_steps:
-        return 1.0
-    else:
-        return 0.0
-
-
-def calculate_step_size_and_hold_steps(total_steps, num_cycles, hold_fraction=0.5):
-    hold_fraction = min(max(hold_fraction, 0), 1)
-    steps_per_cycle = total_steps / num_cycles
-
-    hold_steps = int(steps_per_cycle * hold_fraction)
-    step_size = steps_per_cycle - hold_steps
-
-    return step_size, hold_steps
 
 
 if __name__ == "__main__":
