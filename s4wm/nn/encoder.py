@@ -133,7 +133,11 @@ class ResNetEncoder(nn.Module):
                     subsample=subsample,
                 )(x)
 
-        return x.reshape(x.shape[0], x.shape[1], -1)
+        x = x.reshape(x.shape[0], x.shape[1], -1)
+        x = nn.Dense(features=512)(x)
+        x = nn.silu(x)
+        x = nn.Dense(features=256)(x)
+        return x
 
 
 @partial(jax.jit, static_argnums=(0))
