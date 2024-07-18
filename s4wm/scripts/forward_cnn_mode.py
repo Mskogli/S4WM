@@ -17,6 +17,9 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
+    VIZ_BATCH = 3
+    C_MAP = "magma"
+
     model = S4WM(S4_config=cfg.model, training=False, **cfg.wm)
     torch.manual_seed(0)  # Dataloader order
 
@@ -44,31 +47,28 @@ def main(cfg: DictConfig) -> None:
     pred_depth = out["depth"]["pred"].mean()
     recon_depth = out["depth"]["recon"].mean()
 
-    batch_id = 2
-    c_map = "magma"
-
     if not os.path.exists("imgs"):
         os.makedirs("imgs")
 
-    for i in range(99):
+    for i in range(pred_depth.shape[1]):
         plt.imsave(
             f"imgs/pred_{i}.png",
-            pred_depth[batch_id, i, :].reshape(135, 240),
-            cmap=c_map,
+            pred_depth[VIZ_BATCH, i, :].reshape(135, 240),
+            cmap=C_MAP,
             vmin=0,
             vmax=1,
         )
         plt.imsave(
             f"imgs/recon_{i}.png",
-            recon_depth[batch_id, i, :].reshape(135, 240),
-            cmap=c_map,
+            recon_depth[VIZ_BATCH, i, :].reshape(135, 240),
+            cmap=C_MAP,
             vmin=0,
             vmax=1,
         )
         plt.imsave(
             f"imgs/label_{i}.png",
-            val_depth_images[batch_id, i + 1, :].reshape(135, 240),
-            cmap=c_map,
+            val_depth_images[VIZ_BATCH, i + 1, :].reshape(135, 240),
+            cmap=C_MAP,
             vmin=0,
             vmax=1,
         )
