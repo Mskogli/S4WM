@@ -2,7 +2,7 @@ dataset: depth_dataset
 seed: 72
 
 wm:
-  rnn_mode: True
+  rnn_mode: False
   sample_mean: True
   image_dist_type: "MSE"
   latent_dist_type: "Gaussian"
@@ -15,9 +15,9 @@ wm:
   loss_reduction: "sum"
 
 model:
-  d_model: 512   
+  d_model: 2048   
   n_layers: 2
-  n_blocks: 3
+  n_blocks: 6
   dropout: 0.5
   layer:
     l_max: 99

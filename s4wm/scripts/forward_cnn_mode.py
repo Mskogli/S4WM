@@ -29,9 +29,7 @@ def main(cfg: DictConfig) -> None:
         from_torch_to_jax, (val_depth_images, val_actions)
     )
 
-    state = model.restore_checkpoint_state(
-        "/home/mathias/dev/rl_checkpoints/gaussian_128"
-    )
+    state = model.restore_checkpoint_state("/home/mathias/dev/rl_checkpoints/big-model")
     params = state["params"]
     model.init(
         jax.random.PRNGKey(0), val_depth_images, val_actions, jax.random.PRNGKey(1)
