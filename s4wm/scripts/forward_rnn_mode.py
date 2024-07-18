@@ -65,7 +65,7 @@ def dream(
         action,
         key,
         mutable=["cache"],
-        method="open_loop_prediction",
+        method="forward_open_loop",
     )
     return out["depth_pred"].mean(), out["z_post_pred"]["sample"], vars
 

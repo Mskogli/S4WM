@@ -259,6 +259,32 @@ class S4WM(nn.Module):
 
         return out
 
+    def forward_open_loop(
+        self, predicted_posterior: jnp.ndarray, action: jnp.ndarray, key
+    ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
+        out = {
+            "z_post_pred": {"dist": None, "sample": None},
+            "depth_pred": None,
+            "hidden": None,
+        }
+        g = self.input_head(
+            jnp.concatenate(
+                (
+                    predicted_posterior,
+                    action,
+                ),
+                axis=-1,
+            )
+        )
+        out["hidden"] = self.S4_blocks(g)
+        out["z_post_pred"]["sample"], out["z_post_pred"]["dist"] = self.compute_priors(
+            out["hidden"], rng_seed=key
+        )
+        out["depth_pred"] = self.reconstruct_depth(
+            out["hidden"], out["z_post_pred"]["sample"]
+        )
+        return out
+
     def encode_and_step(
         self, image: jnp.ndarray, action: jnp.ndarray, latent: jnp.ndarray, key
     ) -> Tuple[jnp.ndarray, ...]:  # 2 Tuple
@@ -266,7 +292,7 @@ class S4WM(nn.Module):
         h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
         return z, h
 
-    def open_loop_predict(
+    def encode_and_step_open_loop(
         self, action: jnp.ndarray, latent: jnp.ndarray, key
     ) -> Tuple[jnp.ndarray, ...]:  # 2 tuple
         h = self.S4_blocks(self.input_head(jnp.concatenate((latent, action), axis=-1)))
@@ -351,7 +377,7 @@ def _jitted_open_loop_predict(
         latent,
         rng_seed,
         mutable=["cache"],
-        method="open_loop_predict",
+        method="encode_and_step_open_loop",
     )
 
 
