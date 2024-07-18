@@ -65,14 +65,14 @@ def dream(
         action,
         key,
         mutable=["cache"],
-        method="open_loop_prediction",
+        method="forward_open_loop",
     )
     return out["depth_pred"].mean(), out["z_post_pred"]["sample"], vars
 
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    CTX_LENGTH = 10
+    CTX_LENGTH = 99
     DREAM_LENGTH = 20
     VIZ_BATCH = 3
     BATCH_SIZE = 4
@@ -153,10 +153,10 @@ def main(cfg: DictConfig) -> None:
 
         # Override actions
 
-        # action = action.at[:, :, 3].set(-1)
-        # action = action.at[:, :, 0].set(0)
-        # action = action.at[:, :, 1].set(0)
-        # action = action.at[:, :, 2].set(1)
+        action = action.at[:, :, 3].set(1)
+        action = action.at[:, :, 0].set(0)
+        action = action.at[:, :, 1].set(0)
+        action = action.at[:, :, 2].set(0)
 
         depth_recon, z_post, variables = dream(
             model, params, cache, prime, z_post, action, key

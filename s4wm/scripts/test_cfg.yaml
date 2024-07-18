@@ -2,7 +2,7 @@ dataset: depth_dataset
 seed: 72
 
 wm:
-  rnn_mode: False
+  rnn_mode: True
   sample_mean: True
   image_dist_type: "MSE"
   latent_dist_type: "Gaussian"
@@ -31,7 +31,6 @@ train:
   weight_decay: 0.01
   checkpoint: true
   dataset_path: /home/mathias/dev/datasets/quad_depth_imgs
-
 
 wandb:
   mode: online
