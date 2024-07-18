@@ -72,8 +72,8 @@ def dream(
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    CTX_LENGTH = 10
-    DREAM_LENGTH = 20
+    CTX_LENGTH = 20
+    DREAM_LENGTH = 5
     VIZ_BATCH = 3
     BATCH_SIZE = 4
 
