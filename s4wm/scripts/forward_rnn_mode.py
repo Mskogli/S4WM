@@ -6,16 +6,25 @@ import jax
 import matplotlib.pyplot as plt
 
 from omegaconf import DictConfig
-from s4wm.nn.s4_wm import S4WM
+from s4wm.nn.s4_wm import S4WM, PyTree, PRNGKey
 from s4wm.data.dataloaders import create_depth_dataset
 from s4wm.utils.dlpack import from_torch_to_jax
 from functools import partial
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 
 @partial(jax.jit, static_argnums=(0))
 def _jitted_forward(
-    model, params, cache, prime, imgs: jax.Array, actions: jax.Array, key
-) -> jax.Array:
+    model: S4WM,
+    params: PyTree,
+    cache: PyTree,
+    prime: PyTree,
+    imgs: jnp.ndarray,
+    actions: jnp.ndarray,
+    key: PRNGKey,
+) -> jnp.ndarray:
     out, vars = model.apply(
         {
             "params": params,
@@ -37,7 +46,15 @@ def _jitted_forward(
 
 
 @partial(jax.jit, static_argnums=(0))
-def dream(model, params, cache, prime, pred_posterior, action, key) -> jax.Array:
+def dream(
+    model: S4WM,
+    params: PyTree,
+    cache: PyTree,
+    prime: PyTree,
+    pred_posterior: jnp.ndarray,
+    action: jnp.ndarray,
+    key: PRNGKey,
+) -> jnp.ndarray:
     out, vars = model.apply(
         {
             "params": params,
@@ -55,40 +72,43 @@ def dream(model, params, cache, prime, pred_posterior, action, key) -> jax.Array
 
 @hydra.main(version_base=None, config_path=".", config_name="test_cfg")
 def main(cfg: DictConfig) -> None:
-    context_length = 10
-    dream_length = 20
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    CTX_LENGTH = 10
+    DREAM_LENGTH = 20
+    VIZ_BATCH = 3
+    BATCH_SIZE = 4
 
     key = jax.random.PRNGKey(0)
     model = S4WM(S4_config=cfg.model, training=False, **cfg.wm)
-    torch.manual_seed(0)
+    torch.manual_seed(0)  # Dataloader order
 
-    _, val_loader = create_depth_dataset(batch_size=8)
-    test_depth_imgs, test_actions, _ = next(iter(val_loader))
+    _, val_loader = create_depth_dataset(
+        file_path=cfg.train.dataset_path, batch_size=BATCH_SIZE
+    )
+    val_depth_imgs, val_actions, _ = next(iter(val_loader))
 
-    test_depth_imgs = from_torch_to_jax(test_depth_imgs)
-    test_actions = from_torch_to_jax(test_actions)
+    val_depth_imgs = from_torch_to_jax(val_depth_imgs)
+    val_actions = from_torch_to_jax(val_actions)
 
-    init_depth = jnp.zeros((8, 1, 135, 240, 1))
-    init_actions = jnp.zeros((8, 1, 4))
+    init_depth = jnp.zeros((BATCH_SIZE, 1, 135, 240, 1))
+    init_actions = jnp.zeros((BATCH_SIZE, 1, 4))
 
     state = model.restore_checkpoint_state(
-        "/home/mathias/dev/structured-state-space-wm/s4wm/nn/checkpoints/depth_dataset/d_model=512-lr=0.0001-bsz=8-latent_type=Categorical_12_blocks/checkpoint_99"
+        "/home/mathias/dev/rl_checkpoints/gaussian_128"
     )
     params = state["params"]
 
     cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
 
+    if not os.path.exists("imgs"):
+        os.makedirs("imgs")
+
     # Build context
     z_post = None
 
-    batch = 3
-
-    for i in range(context_length):
+    for i in range(CTX_LENGTH):
         sample_key, key = jax.random.split(key, num=2)
-        depth = jnp.expand_dims(test_depth_imgs[:, i], axis=1)
-        action = jnp.expand_dims(test_actions[:, i], axis=1)
+        depth = jnp.expand_dims(val_depth_imgs[:, i], axis=1)
+        action = jnp.expand_dims(val_actions[:, i], axis=1)
 
         depth_recon, depth_pred, z_post, variables = _jitted_forward(
             model,
@@ -103,23 +123,23 @@ def main(cfg: DictConfig) -> None:
 
         plt.imsave(
             f"imgs/recon_rnn_{i}.png",
-            depth_recon[batch].reshape(135, 240),
+            depth_recon[VIZ_BATCH].reshape(135, 240),
             cmap="magma",
             vmin=0,
             vmax=1,
         )
 
-        if i == context_length - 1:
+        if i == CTX_LENGTH - 1:
             plt.imsave(
                 f"imgs/dream_rnn_0.png",
-                depth_pred[batch].reshape(135, 240),
+                depth_pred[VIZ_BATCH].reshape(135, 240),
                 cmap="magma",
                 vmin=0,
                 vmax=1,
             )
             plt.imsave(
                 f"imgs/dream_label_0.png",
-                test_depth_imgs[batch, i + 1].reshape(135, 240),
+                val_depth_imgs[VIZ_BATCH, i + 1].reshape(135, 240),
                 cmap="magma",
                 vmin=0,
                 vmax=1,
@@ -127,20 +147,24 @@ def main(cfg: DictConfig) -> None:
 
     # Open loop predictions
 
-    for i in range(dream_length):
+    for i in range(DREAM_LENGTH):
         sample_key, key = jax.random.split(key, num=2)
-        action = jnp.expand_dims(test_actions[:, i + context_length], axis=1)
+        action = jnp.expand_dims(val_actions[:, i + CTX_LENGTH], axis=1)
+
+        # Override actions
+
         # action = action.at[:, :, 3].set(-1)
         # action = action.at[:, :, 0].set(0)
         # action = action.at[:, :, 1].set(0)
         # action = action.at[:, :, 2].set(1)
+
         depth_recon, z_post, variables = dream(
             model, params, cache, prime, z_post, action, key
         )
         cache = variables["cache"]
         plt.imsave(
             f"imgs/dream_rnn_{i+1}.png",
-            depth_recon[batch].reshape(135, 240),
+            depth_recon[VIZ_BATCH].reshape(135, 240),
             cmap="magma",
             vmin=0,
             vmax=1,
@@ -148,7 +172,7 @@ def main(cfg: DictConfig) -> None:
 
         plt.imsave(
             f"imgs/dream_label_{i+1}.png",
-            test_depth_imgs[batch, i + context_length + 1].reshape(135, 240),
+            val_depth_imgs[VIZ_BATCH, i + CTX_LENGTH + 1].reshape(135, 240),
             cmap="magma",
             vmin=0,
             vmax=1,
