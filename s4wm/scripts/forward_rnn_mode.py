@@ -92,9 +92,7 @@ def main(cfg: DictConfig) -> None:
     init_depth = jnp.zeros((BATCH_SIZE, 1, 135, 240, 1))
     init_actions = jnp.zeros((BATCH_SIZE, 1, 4))
 
-    state = model.restore_checkpoint_state(
-        "/home/mathias/dev/rl_checkpoints/gaussian_128"
-    )
+    state = model.restore_checkpoint_state("/home/mathias/dev/rl_checkpoints/big-model")
     params = state["params"]
 
     cache, prime = model.init_RNN_mode(params, init_depth, init_actions)
